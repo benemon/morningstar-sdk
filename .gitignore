@@ -1,0 +1,34 @@
+# Compiled binaries built from cmd/* packages.
+# (Listing each by name keeps the file explicit; a bare `*` would
+# accidentally exclude other things.)
+/mccapture
+/morningstar-sdk
+
+# Go test artifacts.
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace files (we don't currently use these but let's not
+# commit them by accident if a contributor enables them locally).
+go.work
+go.work.sum
+
+# Editor / IDE state.
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Notes:
+# - pkg/mc8pro/testdata/ is INTENTIONALLY committed. The .json fixtures
+#   and the .sysex binary captures in testdata/raw/ are required by the
+#   unit tests in pkg/mc8pro/sysex/. They're small, reproducible via
+#   `go run ./cmd/mccapture` against a live device, and let
+#   `go test ./...` pass without hardware.
+# - reference/ lives at the workspace root, outside this module, so
+#   nothing here needs to ignore it.
