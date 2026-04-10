@@ -60,12 +60,13 @@ const (
 // header and before the checksum+F7 trailer. It does NOT include the
 // length bytes; those are recomputed on encode.
 type Frame struct {
-	Model   byte // byte 4; should be ModelMC8Pro
-	Version byte // byte 5; 0 outgoing, 4 incoming
-	Cmd1    byte // byte 6
-	Cmd2    byte // byte 7
-	Args    [4]byte // bytes 8..11
-	Payload []byte  // bytes 16..n-3
+	Model    byte    // byte 4; should be ModelMC8Pro
+	Version  byte    // byte 5; 0 outgoing, 4 incoming
+	Cmd1     byte    // byte 6
+	Cmd2     byte    // byte 7
+	Args     [4]byte // bytes 8..11
+	Payload  []byte  // bytes 16..n-3
+	RawCksum byte    // the checksum byte from the wire (byte n-2); needed for ACK
 }
 
 // Errors returned by Parse.
@@ -161,5 +162,6 @@ func Parse(b []byte) (Frame, error) {
 	// 2-byte trailer. Return a sub-slice; callers that need ownership
 	// should copy.
 	f.Payload = b[HeaderSize : len(b)-TrailerSize]
+	f.RawCksum = b[len(b)-2]
 	return f, nil
 }

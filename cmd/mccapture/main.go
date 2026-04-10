@@ -29,32 +29,11 @@ import (
 	"gitlab.com/gomidi/midi/v2/drivers"
 	_ "gitlab.com/gomidi/midi/v2/drivers/rtmididrv"
 
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro"
 	"github.com/benemon/morningstar-sdk/pkg/mc8pro/sysex"
 )
 
 const portMatch = "MC8 Pro Port 1"
-
-// requestSequence is the init cascade from editor.js:90802
-// requestControllerData(). Sent after session-open with ~150ms between.
-var requestSequence = []struct {
-	name string
-	cmd2 byte
-}{
-	{"UUID", sysex.CmdReqControllerUUID},
-	{"FIRMWARE_VERSION", sysex.CmdReqControllerFirmwareVersion},
-	{"BANK_ARRANGEMENT", sysex.CmdReqBankArrangement},
-	{"EVENT_PROCESSOR", sysex.CmdReqEventProcessor},
-	{"GENERAL_CONFIG", sysex.CmdReqControllerGeneralConfig},
-	{"OMNIPORT_DATA", sysex.CmdReqOmniportData},
-	{"WAVEFORM_ENGINE", sysex.CmdReqWaveformEngine},
-	{"SCROLL_SLOTS", sysex.CmdReqScrollSlots},
-	{"SEQUENCER_ENGINE", sysex.CmdReqSequencerEngine},
-	{"MIDI_CHANNEL_NAMES", sysex.CmdReqMidiChannelNames},
-	{"BANK_PRESET_NAMES", sysex.CmdReqBankPresetNames},
-	{"CONTROLLER_SETTINGS_ALL", sysex.CmdReqControllerSettingsAll},
-	{"PRESET_NAMES", sysex.CmdReqPresetNames},
-	{"MIDI_CLOCK_SLOTS", sysex.CmdReqMidiClockSlots},
-}
 
 func main() {
 	outDir := flag.String("out", filepath.Join("pkg", "mc8", "testdata", "raw"), "directory to write frames to")
@@ -104,13 +83,13 @@ func main() {
 	fmt.Println("<<< waiting 1.2s for device to enter editor mode...")
 	time.Sleep(1200 * time.Millisecond)
 
-	// Request cascade.
+	// Request cascade — shared with Client.Open via mc8pro.InitRequestSequence.
 	fmt.Println(">>> firing init request sequence")
-	for _, r := range requestSequence {
-		req := sysex.Build(sysex.Cmd1General, r.cmd2, sysex.NoArgs, nil)
-		fmt.Printf("    REQUEST_%s (cmd2=%d)\n", r.name, r.cmd2)
+	for _, r := range mc8pro.InitRequestSequence() {
+		req := sysex.Build(sysex.Cmd1General, r.Cmd2, sysex.NoArgs, nil)
+		fmt.Printf("    REQUEST_%s (cmd2=%d)\n", r.Name, r.Cmd2)
 		if err := sender(req); err != nil {
-			die("send %s: %v", r.name, err)
+			die("send %s: %v", r.Name, err)
 		}
 		time.Sleep(150 * time.Millisecond)
 	}

@@ -59,18 +59,41 @@ const (
 	Cmd1Backup  = 0x07 // backup/restore traffic
 )
 
-// Cmd2 values for the upload envelope (Cmd1 = 0x04).
+// Cmd2 values for the write family (Cmd1 = 0x06). These are the
+// editor's live-edit write commands, confirmed from editor.js:85910
+// (sendFullPresetData) and editor.js:90760 (sendFullBankData).
+//
+// Writes are fire-and-forget: the editor sends a bare frame with no
+// startTransmission/endTransmission envelope and does NOT wait for an
+// acknowledgment from the device. The args carry bank/preset/isExp
+// addressing; the payload carries the encoded data.
+const (
+	CmdWritePreset = 0x11 // sendSysex6(6, 17, bank, preset, isExp, 0, data)
+	CmdWriteBank   = 0x12 // sendSysex6(6, 18, bank, 0, 0, 0, data)
+)
+
+// Cmd2 values for the upload envelope (Cmd1 = 0x04). Used only for
+// specific operations like bank-rearrange, NOT for regular preset or
+// bank writes.
 const (
 	CmdUploadStart = 0x00 // editor.js startTransmission()
 	CmdUploadEnd   = 0x01 // editor.js endTransmission()
 )
 
-// Cmd2 values for the backup family (Cmd1 = 0x07). Observed during a
-// device backup stream.
+// Cmd2 values for the backup family (Cmd1 = 0x07). These serve dual
+// purpose: requesting a backup (editor→device) and receiving the
+// backup data stream (device→editor).
 const (
-	CmdBackupHeader   = 0x00 // 18-byte header frame
+	CmdBackupHeader   = 0x00 // Used both as request trigger and response header
 	CmdBackupPreset   = 0x01 // 1032-byte per-preset frame (one per preset slot)
 	CmdBackupBankMeta = 0x02 // 647-byte bank-level metadata frame
+)
+
+// CmdBackupRequest arg values for requesting bank/device dumps
+// via cmd (07, 00, arg). Discovered from editor.js:55546 requestData().
+const (
+	CmdBackupRequestSingleBank = 50 // 0x32 — dump current bank (MC8 Pro: 37 frames)
+	CmdBackupRequestAllBanks   = 51 // 0x33 — dump all banks + controller settings
 )
 
 // NoArgs is a convenience value for commands that take no arguments.

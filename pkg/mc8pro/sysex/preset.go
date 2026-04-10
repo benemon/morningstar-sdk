@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/benemon/morningstar-sdk/pkg/mc8pro"
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro/model"
 )
 
 // Row tags inside a per-preset frame (Cmd1=0x06 live writes,
@@ -36,41 +36,46 @@ const nameRowLen = 32
 const configRowLen = 32
 
 // DecodePresetFrame takes the payload of a frame whose command is
-// (0x06 0x01) or (0x07 0x01) and returns a [mc8pro.Preset] populated
+// (0x06 0x01) or (0x07 0x01) and returns a [model.Preset] populated
 // from the row contents.
 //
 // Fields that we don't yet decode (LED colors, toggle flags, preset
 // config flags from row 5) are left at their zero value. Message row
 // data is decoded fully.
-func DecodePresetFrame(payload []byte) (mc8pro.Preset, error) {
+func DecodePresetFrame(payload []byte) (model.Preset, error) {
 	rows, err := ParseRows(payload)
 	if err != nil {
-		return mc8pro.Preset{}, err
+		return model.Preset{}, err
 	}
 
-	var p mc8pro.Preset
+	var p model.Preset
 	var sawHeader bool
 
 	for _, row := range rows {
 		switch row.Tag {
 		case PresetRowHeader:
 			if len(row.Data) != presetHeaderLen {
-				return mc8pro.Preset{}, fmt.Errorf("sysex: preset header row has %d bytes, want %d", len(row.Data), presetHeaderLen)
+				return model.Preset{}, fmt.Errorf("sysex: preset header row has %d bytes, want %d", len(row.Data), presetHeaderLen)
 			}
-			// Row data layout (empirical from captured frames):
-			// [0] = unknown (seen 00)
-			// [1] = preset index (0..23)
-			// [2] = unknown (seen 00)
+			// Row data layout (verified across multi-bank captures;
+			// see reference/capture-lifecycle-3events.md):
+			// [0] = bank index (0..127; 127 = 0x7F is a valid literal
+			//       bank, not a sentinel — confirmed by observing the
+			//       device on bank 127 before editor connect)
+			// [1] = preset index (0..23 for main, 0..3 for expression)
+			// [2] = isExp flag (0 = main preset, 1 = expression preset)
 			// [3] = unknown (seen 00)
+			p.BankNum = int(row.Data[0])
 			p.PresetNum = int(row.Data[1])
+			p.IsExp = row.Data[2] != 0
 			sawHeader = true
 		case PresetRowMessage:
 			if len(row.Data) != messageRowLen {
-				return mc8pro.Preset{}, fmt.Errorf("sysex: message row has %d bytes, want %d", len(row.Data), messageRowLen)
+				return model.Preset{}, fmt.Errorf("sysex: message row has %d bytes, want %d", len(row.Data), messageRowLen)
 			}
 			msg := decodeMessageRow(row.Data)
 			if msg.M < 0 || msg.M >= len(p.MsgArray) {
-				return mc8pro.Preset{}, fmt.Errorf("sysex: message row slot index %d out of range", msg.M)
+				return model.Preset{}, fmt.Errorf("sysex: message row slot index %d out of range", msg.M)
 			}
 			p.MsgArray[msg.M] = msg
 		case PresetRowShortName:
@@ -92,13 +97,13 @@ func DecodePresetFrame(payload []byte) (mc8pro.Preset, error) {
 	}
 
 	if !sawHeader {
-		return mc8pro.Preset{}, fmt.Errorf("sysex: preset frame missing header row")
+		return model.Preset{}, fmt.Errorf("sysex: preset frame missing header row")
 	}
 	return p, nil
 }
 
 // decodeMessageRow decodes the 23-byte data portion of a PresetRowMessage
-// into a [mc8pro.Message]. The byte layout is from CLAUDE.md (verified by
+// into a [model.Message]. The byte layout is from CLAUDE.md (verified by
 // cross-reference against the JSON backup schema):
 //
 //	[0]      m  (slot index 0..31)
@@ -110,8 +115,8 @@ func DecodePresetFrame(payload []byte) (mc8pro.Preset, error) {
 //	[6]      c  (MIDI channel, 1-indexed)
 //	[7]      tg (toggle group)
 //	[8..22]  data[3..17]
-func decodeMessageRow(row []byte) mc8pro.Message {
-	var m mc8pro.Message
+func decodeMessageRow(row []byte) model.Message {
+	var m model.Message
 	m.M = int(row[0])
 	m.Type = int(row[1])
 	m.Data[0] = int(row[2])
@@ -135,7 +140,7 @@ func decodeASCII(b []byte) string {
 }
 
 // EncodePresetFrame produces the payload bytes for a per-preset frame
-// from a [mc8pro.Preset]. The inverse of DecodePresetFrame.
+// from a [model.Preset]. The inverse of DecodePresetFrame.
 //
 // Important caveat: this only encodes the fields that DecodePresetFrame
 // decodes. Any field not round-tripped by the decoder (LED colors,
@@ -143,12 +148,12 @@ func decodeASCII(b []byte) string {
 // means Encode(Decode(x)) == x holds, but Encode of a freshly-built
 // Preset with custom colors will not yet produce a frame that includes
 // those colors. Full config-row support is a TODO.
-func EncodePresetFrame(p mc8pro.Preset) []byte {
+func EncodePresetFrame(p model.Preset) []byte {
 	var out []byte
 
 	// Row 0: preset header. Layout per CLAUDE.md / captures:
-	// [0]=00, [1]=preset index, [2]=00, [3]=00.
-	out = BuildRow(out, PresetRowHeader, []byte{0x00, byte(p.PresetNum), 0x00, 0x00})
+	// [0]=bank index, [1]=preset index, [2]=00, [3]=00.
+	out = BuildRow(out, PresetRowHeader, []byte{byte(p.BankNum), byte(p.PresetNum), 0x00, 0x00})
 
 	// Rows 1×32: one message row per slot.
 	for i := range p.MsgArray {
@@ -170,7 +175,7 @@ func EncodePresetFrame(p mc8pro.Preset) []byte {
 
 // encodeMessageRow is the inverse of decodeMessageRow. See the comment
 // on decodeMessageRow for the byte layout.
-func encodeMessageRow(m mc8pro.Message) []byte {
+func encodeMessageRow(m model.Message) []byte {
 	row := make([]byte, messageRowLen)
 	row[0] = byte(m.M)
 	row[1] = byte(m.Type)
