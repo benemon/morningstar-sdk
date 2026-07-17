@@ -55,10 +55,58 @@ const (
 
 // Cmd1 family values. Used as the first byte of the command selector.
 const (
-	Cmd1General = 0x00 // most editor commands (including all REQUEST_*)
-	Cmd1Upload  = 0x04 // startTransmission/endTransmission envelope
-	Cmd1Write   = 0x06 // live preset/bank writes
-	Cmd1Backup  = 0x07 // backup/restore traffic
+	Cmd1General  = 0x00 // most editor commands (including all REQUEST_*)
+	Cmd1Upload   = 0x04 // startTransmission/endTransmission envelope
+	Cmd1Write    = 0x06 // live preset/bank writes
+	Cmd1Backup   = 0x07 // backup/restore traffic
+	Cmd1External = 0x70 // official external-application API (documented)
+)
+
+// Cmd2 (op2) values for the official external-application API
+// (Cmd1 = 0x70). Source: reference/sysex-api-external-applications.pdf
+// — Morningstar's DOCUMENTED third-party API, sharing the standard
+// frame structure. The op3..op6 function arguments occupy the normal
+// Args slots; op7 (byte 12) is 0 for every documented function, and
+// the transaction ID (byte 13) may be left 0, so Build produces
+// spec-compliant frames as-is.
+//
+// Most write functions take a save flag: ExtSave commits to flash,
+// any other value applies a TEMPORARY override that reverts when the
+// bank changes.
+const (
+	ExtControllerFunc    = 0x00 // op3: 0=bank up, 1=bank down, 2=toggle page
+	ExtSetPresetShort    = 0x01 // op3=preset, op4=save; payload = padded ASCII
+	ExtSetPresetToggle   = 0x02 // op3=preset, op4=save; payload = padded ASCII
+	ExtSetPresetLong     = 0x03 // op3=preset, op4=save; payload = padded ASCII
+	ExtSetPresetMessage  = 0x04 // op3=preset, op4=slot 0-15, op5=type (PC/CC), op6=save
+	ExtSetPresetOther    = 0x05 // op3=preset, op4=slot?, op6=save; payload = flags+colors
+	ExtSetBankName       = 0x10 // op4=save; payload = padded ASCII (current bank)
+	ExtDisplayMessage    = 0x11 // op4=duration in 100ms units; payload ≤ 20 ASCII chars
+	ExtGetPresetShort    = 0x21 // op3=preset; reply payload = name
+	ExtGetPresetToggle   = 0x22 // op3=preset; reply payload = name
+	ExtGetPresetLong     = 0x23 // op3=preset; reply payload = name
+	ExtGetBankName       = 0x30 // reply payload = current bank name
+	ExtGetToggleStates   = 0x31 // reply payload = one byte per preset, 0x7F = toggled
+	ExtGetControllerInfo = 0x32 // reply payload = model, fw[4], msgs/preset, name sizes
+	ExtError             = 0x7F // device error reply; ack code in op3
+
+	// ExtSave is the op-argument value that commits an external-API
+	// write to flash. Any other value = temporary override.
+	ExtSave = 0x7F
+
+	// ExtColorKeep leaves a color field unchanged in an
+	// ExtSetPresetOther frame. (The PDF prints this as "F7", which
+	// cannot be a SysEx data byte — 0xF7 terminates the frame — so
+	// the intended 7-bit value is 0x7F.)
+	ExtColorKeep = 0x7F
+)
+
+// Ack codes carried in op3 of an ExtError reply.
+const (
+	ExtAckSuccess          = 0x00
+	ExtAckWrongModelID     = 0x01
+	ExtAckWrongChecksum    = 0x02
+	ExtAckWrongPayloadSize = 0x03
 )
 
 // Cmd2 values for the write family (Cmd1 = 0x06). These are the

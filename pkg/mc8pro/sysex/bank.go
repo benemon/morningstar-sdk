@@ -124,7 +124,7 @@ func decodeBankMessageRow(data []byte) (model.Message, error) {
 	m.Data[2] = int(data[4])
 	m.Channel = int(data[5])
 	m.Action = int(data[6])
-	m.ToggleGroup = int(data[7])
+	m.Toggle = int(data[7])
 
 	// Pro models carry data[3..8] in bytes [8..13].
 	if len(data) >= bankMsgRowLen {
@@ -190,7 +190,7 @@ func encodeBankMessageRow(m model.Message) []byte {
 	row[4] = byte(m.Data[2])
 	row[5] = byte(m.Channel)
 	row[6] = byte(m.Action)
-	row[7] = byte(m.ToggleGroup)
+	row[7] = byte(m.Toggle)
 	for i := 0; i < 6; i++ {
 		row[8+i] = byte(m.Data[3+i])
 	}

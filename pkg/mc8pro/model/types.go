@@ -126,13 +126,27 @@ type Preset struct {
 // and [8..22] of the 23-byte SysEx message row — see CLAUDE.md for the
 // full layout.
 type Message struct {
-	Data        [18]int `json:"data"`
-	M           int     `json:"m"` // slot index 0..31 (matches array position)
-	Channel     int     `json:"c"` // MIDI channel 1..16
-	Type        int     `json:"t"` // 0=empty, 2=CC, 15=internal, 24=tap, ...
-	Action      int     `json:"a"` // 1=press, 3=release, ...
-	ToggleGroup int     `json:"tg"`
-	Info        string  `json:"mi"` // optional message info text; may be client-side only
+	Data    [18]int `json:"data"`
+	M       int     `json:"m"` // slot index 0..31 (matches array position)
+	Channel int     `json:"c"` // MIDI channel 1..16
+	Type    int     `json:"t"` // message type; see MsgType* constants
+
+	// Action is the switch trigger that fires this message; see the
+	// Action* constants.
+	Action int `json:"a"`
+
+	// Toggle is the TOGGLE POSITION this message fires in (TogglePos1,
+	// TogglePos2, TogglePosBoth, TogglePosShift — see constants).
+	// NOTE: despite the JSON key "tg", this is NOT the preset-level
+	// toggle group. The editor's message class exposes this field as
+	// getTogglePosition(), its UI binds it to the Position 1 /
+	// Position 2 / Both Positions selector, and the official 0x70
+	// SysEx API glossary names the same values "toggle types"
+	// (POS1=0, POS2=1, POS BOTH=2, SHIFT=3). The default for a new
+	// message is TogglePosBoth (2).
+	Toggle int `json:"tg"`
+
+	Info string `json:"mi"` // optional message info text; may be client-side only
 }
 
 // ControllerSettings wraps the device-level configuration sub-sections

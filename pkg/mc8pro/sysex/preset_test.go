@@ -41,9 +41,9 @@ func TestMessageRowDumpOrder(t *testing.T) {
 		t.Fatalf("DecodePresetFrame: %v", err)
 	}
 	m := p.MsgArray[4]
-	if m.Action != 0x0A || m.ToggleGroup != 0x0B || m.Channel != 0x0C {
+	if m.Action != 0x0A || m.Toggle != 0x0B || m.Channel != 0x0C {
 		t.Errorf("dump-order decode: got a=%d tg=%d c=%d, want a=10 tg=11 c=12",
-			m.Action, m.ToggleGroup, m.Channel)
+			m.Action, m.Toggle, m.Channel)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestMessageRowDumpOrder(t *testing.T) {
 func TestMessageRowWriteOrder(t *testing.T) {
 	var p mc8pro.Preset
 	p.MsgArray[0] = mc8pro.Message{
-		M: 0, Type: 2, Action: 0x0A, ToggleGroup: 0x0B, Channel: 0x0C,
+		M: 0, Type: 2, Action: 0x0A, Toggle: 0x0B, Channel: 0x0C,
 	}
 	payload := sysex.EncodePresetFrame(p)
 
@@ -71,9 +71,9 @@ func TestMessageRowWriteOrder(t *testing.T) {
 // load-bearing correctness test: the capture and the fixture were
 // taken from the SAME device state (the pre-corruption Phase 1
 // session), so every decoded field — including Channel and
-// ToggleGroup on empty slots — must match the editor's export
+// Toggle (position) on empty slots — must match the editor's export
 // exactly. Do not weaken this comparison: the original write-fidelity
-// bug survived precisely because Channel/ToggleGroup mismatches were
+// bug survived precisely because Channel/Toggle mismatches were
 // excluded as "editor normalization" instead of investigated. The
 // fixture pair contains an empty slot with three distinct a/tg/c
 // values, which is what makes the field order provable.

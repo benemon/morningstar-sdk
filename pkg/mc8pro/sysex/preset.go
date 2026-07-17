@@ -131,7 +131,7 @@ func decodeMessageRow(row []byte) model.Message {
 	m.Data[1] = int(row[3])
 	m.Data[2] = int(row[4])
 	m.Action = int(row[5])
-	m.ToggleGroup = int(row[6])
+	m.Toggle = int(row[6])
 	m.Channel = int(row[7])
 	for i := 3; i < 18; i++ {
 		m.Data[i] = int(row[5+i]) // [8..22] → data[3..17]
@@ -265,7 +265,7 @@ func encodeMessageRow(m model.Message) []byte {
 	row[4] = byte(m.Data[2])
 	row[5] = byte(m.Channel)
 	row[6] = byte(m.Action)
-	row[7] = byte(m.ToggleGroup)
+	row[7] = byte(m.Toggle)
 	for i := 3; i < 18; i++ {
 		row[5+i] = byte(m.Data[i])
 	}
