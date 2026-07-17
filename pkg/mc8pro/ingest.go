@@ -175,30 +175,43 @@ func ingestFrame(state *model.State, frame sysex.Frame, log *slog.Logger) {
 		state.Raw[key] = copyBytes(frame.Payload)
 
 	case frame.Cmd1 == 0x11 && frame.Cmd2 == 0x00:
-		// Global device settings (11 00). Purpose not yet fully
-		// identified; stash as raw for now.
+		// Controller UUID (11 00). Identified from the editor's
+		// dispatch (editor.js:91236-91255, "Receiving UUID");
+		// response to REQUEST_CONTROLLER_UUID (cmd 46).
+		uuid, err := sysex.DecodeUUID(frame.Payload)
+		if err != nil {
+			log.Warn("uuid decode failed", slog.String("err", err.Error()))
+			state.Raw[key] = copyBytes(frame.Payload)
+			return
+		}
+		state.UUID = uuid
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 >= 0x22 && frame.Cmd2 <= 0x28:
+		// Controller-settings frames whose decoders are pending the
+		// frame remap. The editor's dispatch (editor.js:91104-91152)
+		// identifies them as: 03 22 bank arrangement, 03 23 omniports,
+		// 03 24 waveform engines, 03 25 sequencer engines, 03 26
+		// scroll counters, 03 27 event processor, 03 28 resistor
+		// ladder aux switches. The SDK's earlier decoders were keyed
+		// to different frames, so they parsed the wrong data; until
+		// each codec is re-derived from the editor's manager classes,
+		// these frames are stashed raw and the corresponding typed
+		// State fields stay unpopulated rather than holding
+		// wrong-frame data that a Write* call could push back to the
+		// device.
 		state.Raw[key] = copyBytes(frame.Payload)
 
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x26:
-		// Waveform engines (03 26).
-		engines, err := sysex.DecodeWaveformEngines(frame.Payload)
-		if err != nil {
-			log.Warn("waveform engines decode failed", slog.String("err", err.Error()))
-			return
-		}
-		state.WaveformEngines = engines
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x25:
-		// Resistor ladder / aux switch calibration (03 25).
-		switches, err := sysex.DecodeResistorLadder(frame.Payload)
-		if err != nil {
-			log.Warn("resistor ladder decode failed", slog.String("err", err.Error()))
-			return
-		}
-		state.ResistorLadder = switches
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x28:
-		// MIDI clock slots (03 28).
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x29:
+		// MIDI clock slots (03 29): [0] reserved, [1] slot count,
+		// then 16 × 2-byte BPM entries — 34 bytes, an exact fit for
+		// this frame's payload. Identified from the editor's dispatch
+		// (editor.js:91148, "Receiving MIDI Clock Slots data");
+		// previously assigned to 03 28, whose 64-byte payload never
+		// matched this structure. The raw payload is stashed alongside
+		// the decode for round-trip fidelity: the write encoding
+		// (04 0C) deliberately differs from the dump layout, so the
+		// original bytes are not reconstructible from the slots.
+		state.Raw[key] = copyBytes(frame.Payload)
 		slots, err := sysex.DecodeMidiClockSlots(frame.Payload)
 		if err != nil {
 			log.Warn("midi clock slots decode failed", slog.String("err", err.Error()))
@@ -208,45 +221,14 @@ func ingestFrame(state *model.State, frame sysex.Frame, log *slog.Logger) {
 
 	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x21:
 		// Global controller settings (03 21, NOT bank arrangement
-		// as previously mis-identified — verified by JSON correlation).
+		// as previously mis-identified — verified by JSON correlation
+		// AND the editor's dispatch, case 33 at editor.js:91065).
 		cfg, err := sysex.DecodeControllerConfig(frame.Payload)
 		if err != nil {
 			log.Warn("controller config decode failed", slog.String("err", err.Error()))
 			return
 		}
 		state.Controller = cfg
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x23:
-		// Sequencer engines (03 23).
-		engines, err := sysex.DecodeSequencerEngines(frame.Payload)
-		if err != nil {
-			log.Warn("sequencer engines decode failed", slog.String("err", err.Error()))
-			return
-		}
-		state.SequencerEngines = engines
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x24:
-		// Omniport / expression inputs (03 24).
-		ports, err := sysex.DecodeOmniports(frame.Payload)
-		if err != nil {
-			log.Warn("omniports decode failed", slog.String("err", err.Error()))
-			return
-		}
-		state.Omniports = ports
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x22:
-		// MIDI event processor (03 22). 10-byte header + 128-byte remap.
-		ep, err := sysex.DecodeMidiEvents(frame.Payload)
-		if err != nil {
-			log.Warn("midi events decode failed", slog.String("err", err.Error()))
-			return
-		}
-		state.MidiEvents = ep
-
-	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x27:
-		// MIDI channel names (03 27). Layout not fully verified;
-		// stash as raw for now.
-		state.Raw[key] = copyBytes(frame.Payload)
 
 	default:
 		// Unknown frame type. Log and stash the payload opaquely.

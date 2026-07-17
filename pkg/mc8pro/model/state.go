@@ -50,32 +50,41 @@ type State struct {
 	// the last bank; it is NOT a sentinel.
 	CurrentBank int
 
-	// Controller holds global device settings from the 11 00 frame.
+	// UUID is the controller's unique identifier from the 11 00
+	// frame: 32 nibble-encoded wire bytes → 16 bytes, rendered here
+	// as a 32-char lowercase hex string of all 16 bytes. NOTE: this
+	// is NOT the string the editor displays or uses as its cloud
+	// profile key — for Pro models the editor renders only the first
+	// 7 bytes, hyphen-separated with byte 6 repeated
+	// ("b0-b1-b2-b3-b4-b5-b6-b6", editor.js:11511). Derive that form
+	// from this one if editor parity is needed.
+	UUID string
+
+	// Controller holds global device settings from the 03 21 frame.
 	Controller ControllerConfig
 
-	// WaveformEngines from the 03 26 frame.
-	WaveformEngines []WaveformEngine
-
-	// ResistorLadder from the 03 25 frame.
-	ResistorLadder []ResistorLadderSwitch
-
-	// MidiClockSlots from the 03 28 frame.
+	// MidiClockSlots from the 03 29 frame (NOT 03 28 — corrected
+	// with the controller-settings frame remap; 03 28 carries
+	// resistor-ladder data and is currently stashed in Raw).
 	MidiClockSlots []MidiClockSlot
 
-	// BankArrangement from the 03 21 frame.
-	BankArrangement BankArrangement
-
-	// SequencerEngines from the 03 23 frame.
-	SequencerEngines []SequencerEngine
-
-	// Omniports from the 03 24 frame.
-	Omniports []OmniportInput
-
-	// MidiEvents from the 03 22 frame (10-byte header + 128-byte remap).
-	MidiEvents MidiEventProcessor
-
-	// MidiChannels from the 03 27 frame (16 channels).
+	// MidiChannels from the 03 20 frame (16 channels).
 	MidiChannels [16]MidiChannel
+
+	// The following sections are NOT currently populated. Their
+	// source frames (03 22 bank arrangement, 03 23 omniports, 03 24
+	// waveform, 03 25 sequencer, 03 26 scroll counters, 03 27 event
+	// processor, 03 28 resistor ladder — per the editor's dispatch,
+	// editor.js:91104-91152) are stashed in Raw until each codec is
+	// re-derived from the editor's manager classes; the SDK's earlier
+	// decoders were keyed to the wrong frames and produced
+	// wrong-section data.
+	WaveformEngines  []WaveformEngine
+	ResistorLadder   []ResistorLadderSwitch
+	BankArrangement  BankArrangement
+	SequencerEngines []SequencerEngine
+	Omniports        []OmniportInput
+	MidiEvents       MidiEventProcessor
 
 	// Raw holds opaque bytes for inbound frame types the SDK does
 	// not fully decode. Keys are (cmd1 << 8) | cmd2; values are the
@@ -101,15 +110,16 @@ func NewState() State {
 // shares nothing with the original.
 func (s State) Clone() State {
 	out := State{
-		Device:           s.Device,
-		BankNames:        s.BankNames,
-		Bank:             s.Bank, // Bank is all arrays / values, no slices
-		CurrentBank:      s.CurrentBank,
-		Controller:       s.Controller,
-		BankArrangement:  s.BankArrangement,
-		MidiEvents:       s.MidiEvents,
-		MidiChannels:     s.MidiChannels,
-		Raw:              make(map[uint16][]byte, len(s.Raw)),
+		Device:          s.Device,
+		UUID:            s.UUID,
+		BankNames:       s.BankNames,
+		Bank:            s.Bank, // Bank is all arrays / values, no slices
+		CurrentBank:     s.CurrentBank,
+		Controller:      s.Controller,
+		BankArrangement: s.BankArrangement,
+		MidiEvents:      s.MidiEvents,
+		MidiChannels:    s.MidiChannels,
+		Raw:             make(map[uint16][]byte, len(s.Raw)),
 	}
 	// Deep-copy slices.
 	if s.WaveformEngines != nil {

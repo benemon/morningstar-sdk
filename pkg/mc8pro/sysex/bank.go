@@ -9,11 +9,11 @@ import (
 
 // Row tags inside a bank metadata frame (Cmd1=0x06 or 0x07, Cmd2=0x02).
 const (
-	BankMetaRowBankNum  = 0x00 // 1 byte: bank number
-	BankMetaRowConfig   = 0x01 // 8 bytes (Pro): bank-level config flags
-	BankMetaRowMessage  = 0x02 // 14 bytes (Pro): one bank-level message
-	BankMetaRowName     = 0x03 // 32 bytes (MC8 Pro): bank name ASCII
-	BankMetaRowDescr    = 0x04 // 32 bytes (MC8 Pro, Pro only): bank description ASCII
+	BankMetaRowBankNum = 0x00 // 1 byte: bank number
+	BankMetaRowConfig  = 0x01 // 8 bytes (Pro): bank-level config flags
+	BankMetaRowMessage = 0x02 // 14 bytes (Pro): one bank-level message
+	BankMetaRowName    = 0x03 // 32 bytes (MC8 Pro): bank name ASCII
+	BankMetaRowDescr   = 0x04 // 32 bytes (MC8 Pro, Pro only): bank description ASCII
 )
 
 // bankConfigRowLen is the length of the Pro bank config row (tag 1).

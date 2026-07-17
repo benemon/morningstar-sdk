@@ -447,8 +447,14 @@ func (c *Client) WriteResistorLadder(ctx context.Context, switches []ResistorLad
 }
 
 // WriteMidiClockSlots writes the MIDI clock BPM presets. Maps to
-// cmd 04 0C.
+// cmd 04 0C. The device holds exactly 16 slots and masks the count
+// byte with &0x1F (a 32-slot write would parse as zero slots), and
+// the editor always sends all 16 — so more than 16 is rejected.
+// BPM values are clamped to 0..500 by the encoder.
 func (c *Client) WriteMidiClockSlots(ctx context.Context, slots []MidiClockSlot) error {
+	if len(slots) > 16 {
+		return fmt.Errorf("mc8pro: %d midi clock slots out of range 0..16", len(slots))
+	}
 	payload := sysex.EncodeMidiClockSlots(slots)
 	c.log.Info("writing midi clock slots", slog.Int("count", len(slots)))
 	return c.sendUpload(sysex.CmdUploadMidiClockSlots, sysex.NoArgs, payload)
@@ -555,6 +561,36 @@ func (c *Client) EngageExpression(ctx context.Context, expNum int) error {
 func (c *Client) ToggleLooperMode(ctx context.Context) error {
 	frame := sysex.Build(sysex.Cmd1General, sysex.CmdToggleLooperMode, sysex.NoArgs, nil)
 	c.log.Info("toggling looper mode")
+	return c.port.Send(frame)
+}
+
+// EnterExpressionCalibration opens the expression-pedal calibration
+// menu on the device's LCD for the given omniport (0..3). Maps to cmd
+// 00 41 (REQUEST_EXPRESSION_CALIBRATION, sendSysexFunction(0, 65,
+// port) — editor.js:15718 requestExpressionPedalCalibration).
+//
+// This is a fire-and-forget UI trigger, not a data request: the
+// device sends no response, and calibration is performed physically
+// on the device. The stored calibration values themselves travel in
+// the controller-settings frames.
+func (c *Client) EnterExpressionCalibration(ctx context.Context, port int) error {
+	if port < 0 || port > 3 {
+		return fmt.Errorf("mc8pro: omniport index %d out of range 0..3", port)
+	}
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdReqExpressionCalibration, [4]byte{byte(port)}, nil)
+	c.log.Info("opening expression calibration menu", slog.Int("port", port))
+	return c.port.Send(frame)
+}
+
+// EnterResistorLadderCalibration opens the aux-switch (resistor
+// ladder) calibration menu on the device's LCD. Maps to cmd 00 42
+// (REQUEST_RESISTOR_LADDER_CALIBRATION, sendSysexFunction(0, 66) —
+// editor.js:15721 requestResistorLadderCalibrationMenu). The editor
+// only offers this for Omniport 1. Fire-and-forget UI trigger; see
+// EnterExpressionCalibration.
+func (c *Client) EnterResistorLadderCalibration(ctx context.Context) error {
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdReqResistorLadderCalibration, sysex.NoArgs, nil)
+	c.log.Info("opening resistor ladder calibration menu")
 	return c.port.Send(frame)
 }
 
@@ -821,8 +857,8 @@ func (c *Client) RestoreBank(ctx context.Context, bank Bank) error {
 	// Step 2: build the frame queue — bank metadata first, then
 	// presets, then expression presets. Matches editor.js:55697-55729.
 	type restoreFrame struct {
-		name    string
-		frame   []byte
+		name  string
+		frame []byte
 	}
 	var queue []restoreFrame
 

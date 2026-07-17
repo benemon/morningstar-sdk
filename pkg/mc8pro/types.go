@@ -31,27 +31,27 @@ import (
 // original are the same type for all purposes — assignment, type
 // assertion, reflection. Callers don't need to know model exists.
 type (
-	Dump                    = model.Dump
-	DumpData                = model.DumpData
-	Bank                    = model.Bank
-	Preset                  = model.Preset
-	Message                 = model.Message
-	Device                  = model.Device
-	Version                 = model.Version
-	State                   = model.State
-	ControllerSettings      = model.ControllerSettings
-	ControllerSettingsData  = model.ControllerSettingsData
-	OpaqueSection           = model.OpaqueSection
-	BankArrangementSection  = model.BankArrangementSection
-	ControllerConfig        = model.ControllerConfig
-	WaveformEngine          = model.WaveformEngine
-	ResistorLadderSwitch    = model.ResistorLadderSwitch
-	MidiClockSlot           = model.MidiClockSlot
-	BankArrangement         = model.BankArrangement
-	SequencerEngine         = model.SequencerEngine
-	OmniportInput           = model.OmniportInput
-	MidiEventProcessor      = model.MidiEventProcessor
-	MidiChannel             = model.MidiChannel
+	Dump                   = model.Dump
+	DumpData               = model.DumpData
+	Bank                   = model.Bank
+	Preset                 = model.Preset
+	Message                = model.Message
+	Device                 = model.Device
+	Version                = model.Version
+	State                  = model.State
+	ControllerSettings     = model.ControllerSettings
+	ControllerSettingsData = model.ControllerSettingsData
+	OpaqueSection          = model.OpaqueSection
+	BankArrangementSection = model.BankArrangementSection
+	ControllerConfig       = model.ControllerConfig
+	WaveformEngine         = model.WaveformEngine
+	ResistorLadderSwitch   = model.ResistorLadderSwitch
+	MidiClockSlot          = model.MidiClockSlot
+	BankArrangement        = model.BankArrangement
+	SequencerEngine        = model.SequencerEngine
+	OmniportInput          = model.OmniportInput
+	MidiEventProcessor     = model.MidiEventProcessor
+	MidiChannel            = model.MidiChannel
 
 	// Frame is the parsed SysEx frame type, re-exported so Subscribe
 	// consumers can work with frames without importing the sysex

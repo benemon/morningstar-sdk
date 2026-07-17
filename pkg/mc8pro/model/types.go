@@ -75,18 +75,18 @@ type DumpData struct {
 // holds 24 preset slots (8 footswitches × 3 pages), 4 expression
 // presets, and 32 bank-level messages that fire on bank entry/exit.
 type Bank struct {
-	BankNumber     int       `json:"bankNumber"` // 0..127
-	BankName       string    `json:"bankName"`   // ≤16 ASCII chars
-	BankClearToggle bool     `json:"bankClearToggle"`
-	BankMsgArray   [32]Message `json:"bankMsgArray"`
-	PresetArray    [24]Preset  `json:"presetArray"`
-	ExpPresetArray [4]Preset   `json:"expPresetArray"`
-	BankDescription string   `json:"bankDescription"`
-	ToDisplay      bool      `json:"toDisplay"`
-	PageLimit      int       `json:"pageLimit"`
-	BackgroundColor int      `json:"backgroundColor"`
-	TextColor      int       `json:"textColor"`
-	IsColorEnabled bool      `json:"isColorEnabled"`
+	BankNumber      int         `json:"bankNumber"` // 0..127
+	BankName        string      `json:"bankName"`   // ≤16 ASCII chars
+	BankClearToggle bool        `json:"bankClearToggle"`
+	BankMsgArray    [32]Message `json:"bankMsgArray"`
+	PresetArray     [24]Preset  `json:"presetArray"`
+	ExpPresetArray  [4]Preset   `json:"expPresetArray"`
+	BankDescription string      `json:"bankDescription"`
+	ToDisplay       bool        `json:"toDisplay"`
+	PageLimit       int         `json:"pageLimit"`
+	BackgroundColor int         `json:"backgroundColor"`
+	TextColor       int         `json:"textColor"`
+	IsColorEnabled  bool        `json:"isColorEnabled"`
 }
 
 // Preset is one addressable footswitch state. An MC8 Pro bank has 24
@@ -94,26 +94,26 @@ type Bank struct {
 // (IsExp=true). Each preset has up to 32 messages which fire in
 // response to actions (press, release, long-press, etc).
 type Preset struct {
-	PresetNum             int       `json:"presetNum"`
-	BankNum               int       `json:"bankNum"`
-	IsExp                 bool      `json:"isExp"`
-	ShortName             string    `json:"shortName"` // ≤32 ASCII chars, shown on LCD
-	ToggleName            string    `json:"toggleName"`
-	LongName              string    `json:"longName"`
-	ShiftName             string    `json:"shiftName"`
-	ToToggle              bool      `json:"toToggle"`
-	ToBlink               bool      `json:"toBlink"`
-	ToMsgScroll           bool      `json:"toMsgScroll"`
-	ToggleGroup           int       `json:"toggleGroup"`
-	LedColor              int       `json:"ledColor"`
-	LedToggleColor        int       `json:"ledToggleColor"`
-	LedShiftColor         int       `json:"ledShiftColor"`
-	NameColor             int       `json:"nameColor"`
-	NameToggleColor       int       `json:"nameToggleColor"`
-	NameShiftColor        int       `json:"nameShiftColor"`
-	BackgroundColor       int       `json:"backgroundColor"`
-	ToggleBackgroundColor int       `json:"toggleBackgroundColor"`
-	ShiftBackgroundColor  int       `json:"shiftBackgroundColor"`
+	PresetNum             int         `json:"presetNum"`
+	BankNum               int         `json:"bankNum"`
+	IsExp                 bool        `json:"isExp"`
+	ShortName             string      `json:"shortName"` // ≤32 ASCII chars, shown on LCD
+	ToggleName            string      `json:"toggleName"`
+	LongName              string      `json:"longName"`
+	ShiftName             string      `json:"shiftName"`
+	ToToggle              bool        `json:"toToggle"`
+	ToBlink               bool        `json:"toBlink"`
+	ToMsgScroll           bool        `json:"toMsgScroll"`
+	ToggleGroup           int         `json:"toggleGroup"`
+	LedColor              int         `json:"ledColor"`
+	LedToggleColor        int         `json:"ledToggleColor"`
+	LedShiftColor         int         `json:"ledShiftColor"`
+	NameColor             int         `json:"nameColor"`
+	NameToggleColor       int         `json:"nameToggleColor"`
+	NameShiftColor        int         `json:"nameShiftColor"`
+	BackgroundColor       int         `json:"backgroundColor"`
+	ToggleBackgroundColor int         `json:"toggleBackgroundColor"`
+	ShiftBackgroundColor  int         `json:"shiftBackgroundColor"`
 	MsgArray              [32]Message `json:"msgArray"`
 }
 
@@ -127,20 +127,20 @@ type Preset struct {
 // full layout.
 type Message struct {
 	Data        [18]int `json:"data"`
-	M           int     `json:"m"`  // slot index 0..31 (matches array position)
-	Channel     int     `json:"c"`  // MIDI channel 1..16
-	Type        int     `json:"t"`  // 0=empty, 2=CC, 15=internal, 24=tap, ...
-	Action      int     `json:"a"`  // 1=press, 3=release, ...
+	M           int     `json:"m"` // slot index 0..31 (matches array position)
+	Channel     int     `json:"c"` // MIDI channel 1..16
+	Type        int     `json:"t"` // 0=empty, 2=CC, 15=internal, 24=tap, ...
+	Action      int     `json:"a"` // 1=press, 3=release, ...
 	ToggleGroup int     `json:"tg"`
 	Info        string  `json:"mi"` // optional message info text; may be client-side only
 }
 
 // ControllerSettings wraps the device-level configuration sub-sections
 // present only in "allBanks" dumps. Each sub-section corresponds to
-// one SysEx command family (e.g. omniports → 03 24). For now these are
+// one SysEx command family (e.g. omniports → 03 23). For now these are
 // held as opaque wrappers; detailed decoding is deferred.
 type ControllerSettings struct {
-	Type string                `json:"type"` // "controller_settings_all"
+	Type string                 `json:"type"` // "controller_settings_all"
 	Data ControllerSettingsData `json:"data"`
 }
 
@@ -149,24 +149,24 @@ type ControllerSettings struct {
 // so reads and writes round-trip losslessly even before we decode the
 // inner byte layout.
 type ControllerSettingsData struct {
-	Omniports         OpaqueSection `json:"omniports"`
-	ResistorLadderAux OpaqueSection `json:"resistor_ladder_aux"`
-	ControllerSettings OpaqueSection `json:"controller_settings"`
-	WaveformEngines   OpaqueSection `json:"waveform_engines"`
-	SequencerEngines  OpaqueSection `json:"sequencer_engines"`
-	ScrollCounters    OpaqueSection `json:"scroll_counters"`
-	MidiChannels      OpaqueSection `json:"midi_channels"`
-	BankArrangement   BankArrangementSection `json:"bank_arrangement"`
-	MidiEvents        OpaqueSection `json:"midi_events"`
-	MidiClockSlots    OpaqueSection `json:"midi_clock_slots"`
+	Omniports          OpaqueSection          `json:"omniports"`
+	ResistorLadderAux  OpaqueSection          `json:"resistor_ladder_aux"`
+	ControllerSettings OpaqueSection          `json:"controller_settings"`
+	WaveformEngines    OpaqueSection          `json:"waveform_engines"`
+	SequencerEngines   OpaqueSection          `json:"sequencer_engines"`
+	ScrollCounters     OpaqueSection          `json:"scroll_counters"`
+	MidiChannels       OpaqueSection          `json:"midi_channels"`
+	BankArrangement    BankArrangementSection `json:"bank_arrangement"`
+	MidiEvents         OpaqueSection          `json:"midi_events"`
+	MidiClockSlots     OpaqueSection          `json:"midi_clock_slots"`
 }
 
 // OpaqueSection is a controller-settings sub-section whose byte layout
 // has not yet been decoded. It preserves the raw JSON for round-trip
 // fidelity.
 type OpaqueSection struct {
-	Type string          `json:"type"`
-	Data rawMessage      `json:"data"`
+	Type string     `json:"type"`
+	Data rawMessage `json:"data"`
 }
 
 // BankArrangementSection is special-cased because it carries two extra

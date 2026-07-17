@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro"
 	"github.com/benemon/morningstar-sdk/pkg/mc8pro/sysex"
 )
 
@@ -198,11 +199,14 @@ func TestMidiChannelsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMidiClockSlotsRoundTrip decodes a captured 03 28 frame.
-func TestMidiClockSlotsRoundTrip(t *testing.T) {
-	framePath := findCapturedFrame(t, 0x03, 0x28)
+// TestMidiClockSlotsDecodeCaptured decodes the captured 03 29 frame
+// (MIDI clock slots per the editor's dispatch). The test device has
+// 16 unconfigured slots, so the capture is [reserved, 0x10, 32 zero
+// BPM bytes].
+func TestMidiClockSlotsDecodeCaptured(t *testing.T) {
+	framePath := findCapturedFrame(t, 0x03, 0x29)
 	if framePath == "" {
-		t.Skip("no captured 03 28 frame")
+		t.Skip("no captured 03 29 frame")
 	}
 	raw, err := os.ReadFile(framePath)
 	if err != nil {
@@ -216,12 +220,31 @@ func TestMidiClockSlotsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("midi clock slots: %d entries", len(slots))
+	if len(slots) != 16 {
+		t.Errorf("slot count: got %d, want 16", len(slots))
+	}
+	for i, s := range slots {
+		if s.BPM != 0 {
+			t.Errorf("slot %d: BPM got %d, want 0 (unconfigured)", i, s.BPM)
+		}
+	}
+}
 
-	reencoded := sysex.EncodeMidiClockSlots(slots)
-	for i := 0; i < len(frame.Payload) && i < len(reencoded); i++ {
-		if reencoded[i] != frame.Payload[i] {
-			t.Errorf("byte [%d]: got 0x%02X, want 0x%02X", i, reencoded[i], frame.Payload[i])
+// TestMidiClockSlotsEncodeWriteOrder pins the WRITE payload shape
+// against the editor's getArray() output: [count, (lsb, msb) × count]
+// with no leading reserved byte (unlike the dump).
+func TestMidiClockSlotsEncodeWriteOrder(t *testing.T) {
+	// BPM 9999 must clamp to 500 (editor.js:13967) rather than
+	// silently wrapping its two 7-bit bytes.
+	slots := []mc8pro.MidiClockSlot{{BPM: 120}, {BPM: 9999}}
+	got := sysex.EncodeMidiClockSlots(slots)
+	want := []byte{2, 120, 0, 500 & 0x7F, 500 >> 7}
+	if len(got) != len(want) {
+		t.Fatalf("payload length: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("byte [%d]: got 0x%02X, want 0x%02X", i, got[i], want[i])
 		}
 	}
 }
@@ -259,5 +282,38 @@ func TestMidiEventsRoundTrip(t *testing.T) {
 		if reencoded[i] != frame.Payload[i] {
 			t.Errorf("byte [%d]: got 0x%02X, want 0x%02X", i, reencoded[i], frame.Payload[i])
 		}
+	}
+}
+
+// TestDecodeUUIDCaptured decodes the captured 11 00 frame and checks
+// the result against the UUID observed live on the test device
+// (State summary during the 2026-07-17 integration run).
+func TestDecodeUUIDCaptured(t *testing.T) {
+	framePath := findCapturedFrame(t, 0x11, 0x00)
+	if framePath == "" {
+		t.Skip("no captured 11 00 frame")
+	}
+	raw, err := os.ReadFile(framePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := sysex.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuid, err := sysex.DecodeUUID(frame.Payload)
+	if err != nil {
+		t.Fatalf("DecodeUUID: %v", err)
+	}
+	const want = "6d550ea6330ba9d70000000000000000"
+	if uuid != want {
+		t.Errorf("uuid: got %s, want %s", uuid, want)
+	}
+}
+
+// TestDecodeUUIDBadLength verifies the length guard.
+func TestDecodeUUIDBadLength(t *testing.T) {
+	if _, err := sysex.DecodeUUID(make([]byte, 16)); err == nil {
+		t.Error("expected error for 16-byte payload, got nil")
 	}
 }

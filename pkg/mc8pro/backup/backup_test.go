@@ -18,8 +18,8 @@ type mockClient struct {
 	// written tracks calls to the write methods.
 	writtenPresets    []writeCall
 	writtenExpPresets []writeCall
-	writtenBankCfg   []int
-	restoredBank     *model.Bank
+	writtenBankCfg    []int
+	restoredBank      *model.Bank
 }
 
 type writeCall struct {
@@ -68,7 +68,7 @@ func newMockClient() *mockClient {
 	}
 	return &mockClient{
 		state: state,
-		dev:   model.Device{Model: 8, Firmware: model.Version{3, 13, 6}},
+		dev:   model.Device{Model: 8, Firmware: model.Version{Major: 3, Minor: 13, Patch: 6}},
 	}
 }
 

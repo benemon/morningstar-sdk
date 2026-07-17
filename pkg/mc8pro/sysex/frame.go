@@ -34,25 +34,25 @@ const (
 // Header field offsets. These are the byte indices into a complete
 // SysEx frame (including F0 and F7 terminators).
 const (
-	OffsetStart    = 0
-	OffsetManf1    = 1
-	OffsetManf2    = 2
-	OffsetManf3    = 3
-	OffsetModel    = 4
-	OffsetVersion  = 5
-	OffsetCmd1     = 6
-	OffsetCmd2     = 7
-	OffsetArg1     = 8
-	OffsetArg2     = 9
-	OffsetArg3     = 10
-	OffsetArg4     = 11
-	OffsetRes1     = 12
-	OffsetRes2     = 13
-	OffsetLenMSB   = 14
-	OffsetLenLSB   = 15
-	HeaderSize     = 16 // bytes [0..15], payload starts at [16]
-	TrailerSize    = 2  // checksum + 0xF7
-	MinFrameSize   = HeaderSize + TrailerSize
+	OffsetStart   = 0
+	OffsetManf1   = 1
+	OffsetManf2   = 2
+	OffsetManf3   = 3
+	OffsetModel   = 4
+	OffsetVersion = 5
+	OffsetCmd1    = 6
+	OffsetCmd2    = 7
+	OffsetArg1    = 8
+	OffsetArg2    = 9
+	OffsetArg3    = 10
+	OffsetArg4    = 11
+	OffsetRes1    = 12
+	OffsetRes2    = 13
+	OffsetLenMSB  = 14
+	OffsetLenLSB  = 15
+	HeaderSize    = 16 // bytes [0..15], payload starts at [16]
+	TrailerSize   = 2  // checksum + 0xF7
+	MinFrameSize  = HeaderSize + TrailerSize
 )
 
 // Frame is a decoded representation of a Morningstar SysEx message.
@@ -71,12 +71,12 @@ type Frame struct {
 
 // Errors returned by Parse.
 var (
-	ErrTooShort       = errors.New("sysex: frame too short")
-	ErrBadStart       = errors.New("sysex: missing 0xF0 start byte")
-	ErrBadEnd         = errors.New("sysex: missing 0xF7 end byte")
+	ErrTooShort        = errors.New("sysex: frame too short")
+	ErrBadStart        = errors.New("sysex: missing 0xF0 start byte")
+	ErrBadEnd          = errors.New("sysex: missing 0xF7 end byte")
 	ErrBadManufacturer = errors.New("sysex: manufacturer ID is not Morningstar (00 21 24)")
-	ErrBadChecksum    = errors.New("sysex: checksum mismatch")
-	ErrBadLength      = errors.New("sysex: length field does not match frame size")
+	ErrBadChecksum     = errors.New("sysex: checksum mismatch")
+	ErrBadLength       = errors.New("sysex: length field does not match frame size")
 )
 
 // Checksum computes the Morningstar SysEx checksum over the given

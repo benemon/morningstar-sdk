@@ -307,4 +307,3 @@ func dumpToWritePayload(t *testing.T, dump []byte) []byte {
 	}
 	return out
 }
-

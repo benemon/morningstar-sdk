@@ -133,12 +133,18 @@ func TestIntegrationOpenStatePopulated(t *testing.T) {
 			populated++
 		}
 	}
-	t.Logf("State summary: device=%s fw=%s serial=% X currentBank=%d bankName=%q populatedNames=%d",
+	t.Logf("State summary: device=%s fw=%s serial=% X currentBank=%d bankName=%q populatedNames=%d uuid=%s",
 		"MC8 Pro", state.Device.Firmware.String(), state.Device.Serial,
-		state.CurrentBank, state.Bank.BankName, populated)
+		state.CurrentBank, state.Bank.BankName, populated, state.UUID)
 
 	if populated == 0 {
 		t.Error("no bank names populated; expected at least one")
+	}
+
+	// UUID should be decoded from the 11 00 frame (response to the
+	// REQUEST_CONTROLLER_UUID init request): 32 hex chars.
+	if len(state.UUID) != 32 {
+		t.Errorf("State.UUID = %q, want a 32-char hex string", state.UUID)
 	}
 }
 
@@ -722,17 +728,42 @@ func TestIntegrationRestoreFidelity(t *testing.T) {
 
 	// Step 4: field-level comparison, most specific first so a
 	// failure pinpoints the drift.
-	if before.BankName != after.BankName {
-		t.Errorf("BankName: %q -> %q", before.BankName, after.BankName)
-	}
 	for i := range before.PresetArray {
 		comparePreset(t, "preset", i, before.PresetArray[i], after.PresetArray[i])
 	}
 	for i := range before.ExpPresetArray {
 		comparePreset(t, "expPreset", i, before.ExpPresetArray[i], after.ExpPresetArray[i])
 	}
-	if !reflect.DeepEqual(before.BankMsgArray, after.BankMsgArray) {
-		t.Errorf("BankMsgArray drifted")
+	for i := range before.BankMsgArray {
+		if !reflect.DeepEqual(before.BankMsgArray[i], after.BankMsgArray[i]) {
+			t.Errorf("bank msg %d:\n  before: %+v\n  after:  %+v",
+				i, before.BankMsgArray[i], after.BankMsgArray[i])
+		}
+	}
+
+	// Bank-level config: everything that isn't one of the arrays
+	// compared above. This is the last piece of the Phase 4.5 exit
+	// criterion: zero diff across ALL Bank and Preset fields.
+	// Field-by-field so a failure names the drifted field instead of
+	// dumping two full Bank structs.
+	type bankScalar struct {
+		name          string
+		before, after any
+	}
+	for _, f := range []bankScalar{
+		{"BankNumber", before.BankNumber, after.BankNumber},
+		{"BankName", before.BankName, after.BankName},
+		{"BankDescription", before.BankDescription, after.BankDescription},
+		{"BankClearToggle", before.BankClearToggle, after.BankClearToggle},
+		{"ToDisplay", before.ToDisplay, after.ToDisplay},
+		{"PageLimit", before.PageLimit, after.PageLimit},
+		{"BackgroundColor", before.BackgroundColor, after.BackgroundColor},
+		{"TextColor", before.TextColor, after.TextColor},
+		{"IsColorEnabled", before.IsColorEnabled, after.IsColorEnabled},
+	} {
+		if f.before != f.after {
+			t.Errorf("bank %s: %v -> %v", f.name, f.before, f.after)
+		}
 	}
 	if !t.Failed() {
 		t.Logf("zero-diff verified: bank %d survived read->restore->read intact", bankNum)

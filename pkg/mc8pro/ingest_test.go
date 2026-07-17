@@ -113,9 +113,14 @@ func TestIngestBankNamesFrame(t *testing.T) {
 // TestIngestUnknownFrameGoesToRaw verifies that a frame type we
 // don't decode is stored in the Raw passthrough map.
 func TestIngestUnknownFrameGoesToRaw(t *testing.T) {
-	// Use a 03 29 frame (unknown small config) — we don't decode
-	// it, so it should land in Raw.
-	frame := parseFixture(t, "033_0329_len0052.sysex")
+	// Synthesize a frame with a command the SDK has no case for, so
+	// it exercises the default path. (03 29 was used here before it
+	// was identified as MIDI clock slots.)
+	raw := sysex.Build(0x05, 0x55, sysex.NoArgs, []byte{1, 2, 3})
+	frame, err := sysex.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse synthetic frame: %v", err)
+	}
 
 	state := model.NewState()
 	ingestFrame(&state, frame, silentLogger)

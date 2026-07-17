@@ -25,27 +25,27 @@ const (
 
 	// REQUEST_* — read-side commands. The device replies with one or
 	// more frames carrying the requested data.
-	CmdReqEngagePreset               = 29 // remote-trigger a preset press
-	CmdReqEngageExp                  = 30 // remote-trigger an expression engage
-	CmdSwapPreset                    = 24 // swap a main preset slot (device-side)
-	CmdSwapExpPreset                 = 25 // swap an expression preset slot (device-side)
-	CmdReqControllerSettingsAll      = 35
-	CmdReqControllerGeneralConfig    = 36
-	CmdReqWaveformEngine             = 37
-	CmdReqSequencerEngine            = 38
-	CmdReqScrollSlots                = 39
-	CmdReqMidiChannelNames           = 40
-	CmdReqBankArrangement            = 41
-	CmdReqOmniportData               = 42
-	CmdReqBankPresetNames            = 43
-	CmdReqControllerFirmwareVersion  = 44
-	CmdReqEventProcessor             = 45
-	CmdReqControllerUUID             = 46
-	CmdToggleLooperMode              = 47
-	CmdReqPresetNames                = 64
-	CmdReqExpressionCalibration      = 65
-	CmdReqResistorLadderCalibration  = 66
-	CmdReqMidiClockSlots             = 80
+	CmdReqEngagePreset              = 29 // remote-trigger a preset press
+	CmdReqEngageExp                 = 30 // remote-trigger an expression engage
+	CmdSwapPreset                   = 24 // swap a main preset slot (device-side)
+	CmdSwapExpPreset                = 25 // swap an expression preset slot (device-side)
+	CmdReqControllerSettingsAll     = 35
+	CmdReqControllerGeneralConfig   = 36
+	CmdReqWaveformEngine            = 37
+	CmdReqSequencerEngine           = 38
+	CmdReqScrollSlots               = 39
+	CmdReqMidiChannelNames          = 40
+	CmdReqBankArrangement           = 41
+	CmdReqOmniportData              = 42
+	CmdReqBankPresetNames           = 43
+	CmdReqControllerFirmwareVersion = 44
+	CmdReqEventProcessor            = 45
+	CmdReqControllerUUID            = 46
+	CmdToggleLooperMode             = 47
+	CmdReqPresetNames               = 64
+	CmdReqExpressionCalibration     = 65
+	CmdReqResistorLadderCalibration = 66
+	CmdReqMidiClockSlots            = 80
 
 	// Handshake.
 	CmdPing         = 125 // sendPing()
@@ -78,19 +78,19 @@ const (
 // controller-settings writes. Each write is wrapped in
 // startTransmission / endTransmission.
 const (
-	CmdUploadStart          = 0x00 // editor.js startTransmission()
-	CmdUploadEnd            = 0x01 // editor.js endTransmission()
-	CmdUploadControllerCfg  = 0x02 // sendSysex(4, 2, data)
-	CmdUploadMidiChannels   = 0x03 // sysexBuilder(4, 3) — row-framed
-	CmdUploadBankArrange    = 0x04 // sendSysex4(4, 4, 0, 0, data)
-	CmdUploadWaveform       = 0x05 // sendSysex4(4, 5, 0, 0, data)
-	CmdUploadSequencer      = 0x06 // sendSysex4(4, 6, 0, 0, data)
-	CmdUploadScrollCounters = 0x07 // sendSysex4(4, 7, 0, 0, data)
-	CmdUploadOmniports      = 0x08 // sendSysex(4, 8, data)
+	CmdUploadStart           = 0x00 // editor.js startTransmission()
+	CmdUploadEnd             = 0x01 // editor.js endTransmission()
+	CmdUploadControllerCfg   = 0x02 // sendSysex(4, 2, data)
+	CmdUploadMidiChannels    = 0x03 // sysexBuilder(4, 3) — row-framed
+	CmdUploadBankArrange     = 0x04 // sendSysex4(4, 4, 0, 0, data)
+	CmdUploadWaveform        = 0x05 // sendSysex4(4, 5, 0, 0, data)
+	CmdUploadSequencer       = 0x06 // sendSysex4(4, 6, 0, 0, data)
+	CmdUploadScrollCounters  = 0x07 // sendSysex4(4, 7, 0, 0, data)
+	CmdUploadOmniports       = 0x08 // sendSysex(4, 8, data)
 	CmdUploadPresetRearrange = 0x09 // sendSysex4(4, 9, 0, 0, data)
 	CmdUploadEventProcessor  = 0x0A // sendSysex4(4, 10, 0, 0, data)
-	CmdUploadResistorLadder = 0x0B // sendSysex(4, 11, data)
-	CmdUploadMidiClockSlots = 0x0C // sendSysex(4, 12, data)
+	CmdUploadResistorLadder  = 0x0B // sendSysex(4, 11, data)
+	CmdUploadMidiClockSlots  = 0x0C // sendSysex(4, 12, data)
 )
 
 // Cmd2 values for the backup family (Cmd1 = 0x07). These serve dual
@@ -144,8 +144,8 @@ const (
 	// Cmd2 values for restore data frames (Cmd1 = 0x07).
 	// These mirror the backup Cmd2 values but with different
 	// numbers for the upload direction.
-	CmdRestoreBankMeta = 0x10 // sendSysex(7, 16, data)     — editor.js:55671
-	CmdRestorePreset   = 0x11 // sendSysex4(7, 17, n, 0, d) — editor.js:55674
+	CmdRestoreBankMeta  = 0x10 // sendSysex(7, 16, data)     — editor.js:55671
+	CmdRestorePreset    = 0x11 // sendSysex4(7, 17, n, 0, d) — editor.js:55674
 	CmdRestoreExpPreset = 0x12 // sendSysex4(7, 18, n, 0, d) — editor.js:55677
 )
 
