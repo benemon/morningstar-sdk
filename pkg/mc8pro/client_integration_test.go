@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -650,5 +652,107 @@ done:
 		t.Error("Subscribe received 0 frames; expected at least 1 from SelectBank")
 	} else {
 		t.Logf("Subscribe received %d frames during SelectBank", count)
+	}
+}
+
+// TestIntegrationRestoreFidelity is the hardware acid test for the
+// direction-asymmetric message-row codec fix: it reads a full bank,
+// restores the IDENTICAL data back to the device via the restore
+// protocol, re-reads, and requires the two reads to be deeply equal
+// across every preset, message, and config field. Before the fix,
+// this cycle swapped channel/action on every message; a pass here
+// means read→write round-trips are faithful end to end.
+//
+// A JSON backup of the bank's pre-test state is written to the OS
+// temp directory first and its path logged, so the bank can be
+// restored via ImportBank (or the Morningstar editor) if the test
+// leaves the device in a bad state.
+//
+// Target bank defaults to 0; override with MC8PRO_FIDELITY_BANK.
+func TestIntegrationRestoreFidelity(t *testing.T) {
+	bankNum := 0
+	if v := os.Getenv("MC8PRO_FIDELITY_BANK"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 127 {
+			t.Fatalf("MC8PRO_FIDELITY_BANK=%q: want an integer 0..127", v)
+		}
+		bankNum = n
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	client, err := mc8pro.Open(ctx, mc8pro.OpenOptions{
+		Logger: integrationLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer client.Close()
+
+	// Step 1: read the bank and save a recovery backup BEFORE writing.
+	dump, err := backup.ExportBank(ctx, client, bankNum)
+	if err != nil {
+		t.Fatalf("ExportBank(%d): %v", bankNum, err)
+	}
+	before := *dump.Data.Bank
+
+	recovery := filepath.Join(os.TempDir(),
+		time.Now().Format("20060102-150405")+"-mc8pro-fidelity-bank"+strconv.Itoa(bankNum)+".json")
+	if err := backup.WriteFile(recovery, dump); err != nil {
+		t.Fatalf("write recovery backup: %v", err)
+	}
+	t.Logf("recovery backup: %s", recovery)
+
+	// Step 2: restore the identical data back to the device.
+	if err := client.RestoreBank(ctx, before); err != nil {
+		t.Fatalf("RestoreBank: %v", err)
+	}
+
+	// Step 3: settle, then re-read.
+	time.Sleep(1500 * time.Millisecond)
+	if err := client.SelectBank(ctx, bankNum); err != nil {
+		t.Fatalf("SelectBank(%d) after restore: %v", bankNum, err)
+	}
+	dump2, err := backup.ExportBank(ctx, client, bankNum)
+	if err != nil {
+		t.Fatalf("ExportBank(%d) after restore: %v", bankNum, err)
+	}
+	after := *dump2.Data.Bank
+
+	// Step 4: field-level comparison, most specific first so a
+	// failure pinpoints the drift.
+	if before.BankName != after.BankName {
+		t.Errorf("BankName: %q -> %q", before.BankName, after.BankName)
+	}
+	for i := range before.PresetArray {
+		comparePreset(t, "preset", i, before.PresetArray[i], after.PresetArray[i])
+	}
+	for i := range before.ExpPresetArray {
+		comparePreset(t, "expPreset", i, before.ExpPresetArray[i], after.ExpPresetArray[i])
+	}
+	if !reflect.DeepEqual(before.BankMsgArray, after.BankMsgArray) {
+		t.Errorf("BankMsgArray drifted")
+	}
+	if !t.Failed() {
+		t.Logf("zero-diff verified: bank %d survived read->restore->read intact", bankNum)
+	}
+}
+
+// comparePreset reports every field-level difference between two
+// presets, message by message.
+func comparePreset(t *testing.T, kind string, idx int, before, after mc8pro.Preset) {
+	t.Helper()
+	for m := range before.MsgArray {
+		bm, am := before.MsgArray[m], after.MsgArray[m]
+		bm.Info, am.Info = "", ""
+		if !reflect.DeepEqual(bm, am) {
+			t.Errorf("%s %d msg %d:\n  before: %+v\n  after:  %+v", kind, idx, m, bm, am)
+		}
+	}
+	bm, am := before, after
+	bm.MsgArray, am.MsgArray = [32]mc8pro.Message{}, [32]mc8pro.Message{}
+	if !reflect.DeepEqual(bm, am) {
+		t.Errorf("%s %d config/names:\n  before: %+v\n  after:  %+v", kind, idx, bm, am)
 	}
 }

@@ -98,8 +98,16 @@ func DecodePresetFrame(payload []byte) (model.Preset, error) {
 }
 
 // decodeMessageRow decodes the 23-byte data portion of a PresetRowMessage
-// into a [model.Message]. The byte layout was verified by correlating
-// wire capture byte values against known preset configuration:
+// as found in device DUMPS (06 01 live dumps and 07 01 backup frames).
+//
+// Preset message rows are DIRECTION-ASYMMETRIC: bytes [5]–[7] carry
+// (action, toggleGroup, channel) in dumps but (channel, action,
+// toggleGroup) in writes — see encodeMessageRow. This mirrors the
+// editor, whose decoder (editor.js:14707-14760, `channel: it, action:
+// Be, toggle: je`) does not match its encoder (editor.js:14836-14858).
+// Bank message rows (sysex/bank.go) are NOT asymmetric.
+//
+// Dump layout:
 //
 //	[0]      m  (slot index 0..31)
 //	[1]      t  (message type)
@@ -107,15 +115,14 @@ func DecodePresetFrame(payload []byte) (model.Preset, error) {
 //	[3]      data[1]  (CC value for CC type)
 //	[4]      data[2]
 //	[5]      a  (action/trigger)
-//	[6]      c  (MIDI channel)
-//	[7]      tg (toggle group)
+//	[6]      tg (toggle group)
+//	[7]      c  (MIDI channel)
 //	[8..22]  data[3..17]
 //
-// Verified: Overdrive preset has action=1(Press), channel=2. Wire
-// byte [5]=0x01, [6]=0x02. Therefore [5]=action, [6]=channel.
-// Note: editor.js:14856 calls getChannel() then getAction() but
-// the JS variable names are misleading — the push order into the
-// array does not match the semantic field names in the JS source.
+// Ground truth: the Phase 1 capture of the Overdrive preset has an
+// empty slot with three distinct values — editor JSON a=0, tg=2, c=1;
+// wire [5]=0, [6]=2, [7]=1 — which uniquely determines this order.
+// See CLAUDE.md "23-byte SysEx row ↔ Message mapping (CORRECTED)".
 func decodeMessageRow(row []byte) model.Message {
 	var m model.Message
 	m.M = int(row[0])
@@ -124,8 +131,8 @@ func decodeMessageRow(row []byte) model.Message {
 	m.Data[1] = int(row[3])
 	m.Data[2] = int(row[4])
 	m.Action = int(row[5])
-	m.Channel = int(row[6])
-	m.ToggleGroup = int(row[7])
+	m.ToggleGroup = int(row[6])
+	m.Channel = int(row[7])
 	for i := 3; i < 18; i++ {
 		m.Data[i] = int(row[5+i]) // [8..22] → data[3..17]
 	}
@@ -141,7 +148,9 @@ func decodeASCII(b []byte) string {
 }
 
 // EncodePresetFrame produces the payload bytes for a per-preset frame
-// from a [model.Preset]. The inverse of DecodePresetFrame.
+// in the WRITE direction (06 11 / 07 11 / 07 12). It is deliberately
+// NOT the inverse of DecodePresetFrame: message-row bytes [5]–[7] are
+// direction-asymmetric on the wire (see encodeMessageRow).
 func EncodePresetFrame(p model.Preset) []byte {
 	var out []byte
 
@@ -236,8 +245,17 @@ func encodeConfigRow(p model.Preset) []byte {
 	return buf
 }
 
-// encodeMessageRow is the inverse of decodeMessageRow. See the comment
-// on decodeMessageRow for the byte layout.
+// encodeMessageRow produces the 23-byte message row in the WRITE
+// direction (06 11 live writes and 07 11/07 12 restore frames).
+//
+// NOT the inverse of decodeMessageRow: writes use (channel, action,
+// toggleGroup) at bytes [5]–[7] where dumps use (action, toggleGroup,
+// channel). This matches the editor's getSysexArray
+// (editor.js:14836-14858: getChannel(), getAction(), getToggle()) —
+// the function the editor's save and restore paths actually call.
+// Encoding with the dump order corrupts the device: action lands in
+// the channel slot and channel in the action slot (the write-fidelity
+// blocker root cause). See decodeMessageRow for the full story.
 func encodeMessageRow(m model.Message) []byte {
 	row := make([]byte, messageRowLen)
 	row[0] = byte(m.M)
@@ -245,8 +263,8 @@ func encodeMessageRow(m model.Message) []byte {
 	row[2] = byte(m.Data[0])
 	row[3] = byte(m.Data[1])
 	row[4] = byte(m.Data[2])
-	row[5] = byte(m.Action)
-	row[6] = byte(m.Channel)
+	row[5] = byte(m.Channel)
+	row[6] = byte(m.Action)
 	row[7] = byte(m.ToggleGroup)
 	for i := 3; i < 18; i++ {
 		row[5+i] = byte(m.Data[i])

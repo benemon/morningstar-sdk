@@ -11,43 +11,72 @@ import (
 	"github.com/benemon/morningstar-sdk/pkg/mc8pro/sysex"
 )
 
-// TestPresetEncodeDecodeRoundTrip verifies that encode and decode are
-// inverses of each other, using presets from the JSON fixture. All
-// decoded fields (header, messages, names, config row) are compared.
-func TestPresetEncodeDecodeRoundTrip(t *testing.T) {
-	dump := loadFixtureDump(t, "bank-guitar-live.json")
-	if dump.Data.Bank == nil {
-		t.Fatal("fixture is not a singleBank dump")
+// Message-row bytes [5]–[7] are direction-asymmetric on the wire:
+// dumps carry (action, toggleGroup, channel), writes must carry
+// (channel, action, toggleGroup). Encode and decode are therefore
+// deliberately NOT inverses, and there is no encode→decode round-trip
+// test: such a test can only prove self-consistency, and a symmetric
+// codec with the wrong field order passes it while corrupting every
+// real write (this was the write-fidelity blocker). Each direction is
+// instead pinned independently below.
+
+// TestMessageRowDumpOrder pins the DECODE direction: a message row
+// with three distinct values at bytes [5]–[7] must decode as
+// (action, toggleGroup, channel).
+func TestMessageRowDumpOrder(t *testing.T) {
+	var payload []byte
+	payload = sysex.BuildRow(payload, 0x00, []byte{3, 7, 0, 0}) // header: bank 3, preset 7
+	row := make([]byte, 23)
+	row[0] = 4    // m: slot 4
+	row[1] = 2    // t: CC
+	row[2] = 39   // data[0]: CC#
+	row[3] = 64   // data[1]: value
+	row[5] = 0x0A // dump order: action
+	row[6] = 0x0B // dump order: toggleGroup
+	row[7] = 0x0C // dump order: channel
+	payload = sysex.BuildRow(payload, 0x01, row)
+
+	p, err := sysex.DecodePresetFrame(payload)
+	if err != nil {
+		t.Fatalf("DecodePresetFrame: %v", err)
 	}
+	m := p.MsgArray[4]
+	if m.Action != 0x0A || m.ToggleGroup != 0x0B || m.Channel != 0x0C {
+		t.Errorf("dump-order decode: got a=%d tg=%d c=%d, want a=10 tg=11 c=12",
+			m.Action, m.ToggleGroup, m.Channel)
+	}
+}
 
-	for i := range dump.Data.Bank.PresetArray {
-		original := dump.Data.Bank.PresetArray[i]
-		t.Run(presetTestName(i, original), func(t *testing.T) {
-			payload := sysex.EncodePresetFrame(original)
-			decoded, err := sysex.DecodePresetFrame(payload)
-			if err != nil {
-				t.Fatalf("DecodePresetFrame: %v", err)
-			}
+// TestMessageRowWriteOrder pins the ENCODE direction: a message with
+// distinct field values must encode with (channel, action,
+// toggleGroup) at bytes [5]–[7], matching the editor's getSysexArray
+// (editor.js:14836-14858).
+func TestMessageRowWriteOrder(t *testing.T) {
+	var p mc8pro.Preset
+	p.MsgArray[0] = mc8pro.Message{
+		M: 0, Type: 2, Action: 0x0A, ToggleGroup: 0x0B, Channel: 0x0C,
+	}
+	payload := sysex.EncodePresetFrame(p)
 
-			if !reflect.DeepEqual(original, decoded) {
-				t.Errorf("round-trip mismatch\n want: %+v\n  got: %+v", original, decoded)
-			}
-		})
+	// First message row follows the 7-byte header row: 7F 01 17 <23 bytes>.
+	rowData := payload[7+3 : 7+3+23]
+	if rowData[5] != 0x0C || rowData[6] != 0x0A || rowData[7] != 0x0B {
+		t.Errorf("write-order encode: got [5]=%d [6]=%d [7]=%d, want [5]=c(12) [6]=a(10) [7]=tg(11)",
+			rowData[5], rowData[6], rowData[7])
 	}
 }
 
 // TestPresetDecodeCapturedFrame compares the decoder's output on a
 // captured wire frame against the JSON fixture. This is the
-// load-bearing correctness test: if the populated messages in the
-// decoded preset match what the editor would export, our decoder is
-// provably correct for the fields it covers.
-//
-// We compare populated messages byte-for-byte and empty slots only by
-// type. This is because the editor normalizes empty-slot field values
-// on export (Channel=1, ToggleGroup=2) while the wire carries
-// "leftover" values (Channel=2, ToggleGroup=1 or similar) that are
-// semantically irrelevant when Type=0. Trying to match empty-slot
-// defaults would be fighting a battle over don't-care values.
+// load-bearing correctness test: the capture and the fixture were
+// taken from the SAME device state (the pre-corruption Phase 1
+// session), so every decoded field — including Channel and
+// ToggleGroup on empty slots — must match the editor's export
+// exactly. Do not weaken this comparison: the original write-fidelity
+// bug survived precisely because Channel/ToggleGroup mismatches were
+// excluded as "editor normalization" instead of investigated. The
+// fixture pair contains an empty slot with three distinct a/tg/c
+// values, which is what makes the field order provable.
 //
 // Skipped when the capture fixture is absent (run `go run
 // ./cmd/mccapture` with the pedal connected to generate it).
@@ -134,33 +163,18 @@ func TestPresetDecodeCapturedFrame(t *testing.T) {
 		t.Errorf("ShiftBackgroundColor: got %d, want %d", decoded.ShiftBackgroundColor, expected.ShiftBackgroundColor)
 	}
 
-	// Message comparison: compare populated message slots against the
-	// JSON fixture. We only compare M, Type, Action, and Data — the
-	// fields that define the message's behavior. Channel and
-	// ToggleGroup are excluded because the editor's JSON export
-	// normalizes these differently from the wire for some message
-	// types (e.g. Type=15 internal messages: wire has c=2/tg=1,
-	// editor exports c=1/tg=2). Empty slots are skipped entirely —
-	// their wire defaults differ from JSON. Wire byte-level fidelity
-	// for ALL slots is covered by TestPresetWireRoundTrip.
+	// Message comparison: every field on every slot, empty slots
+	// included. The fixture and capture are from the same device
+	// state, so any mismatch is a decoder bug — see the test comment.
+	// Info (mi) is excluded: it is client-side editor metadata and
+	// never appears on the wire.
 	for i := range decoded.MsgArray {
 		dm := decoded.MsgArray[i]
 		em := expected.MsgArray[i]
-		if dm.Type == 0 && em.Type == 0 {
-			continue // both empty
-		}
-		if dm.Type != em.Type {
-			t.Errorf("slot %d: Type got %d, want %d", i, dm.Type, em.Type)
-			continue
-		}
-		if dm.M != em.M {
-			t.Errorf("slot %d: M got %d, want %d", i, dm.M, em.M)
-		}
-		if dm.Action != em.Action {
-			t.Errorf("slot %d: Action got %d, want %d", i, dm.Action, em.Action)
-		}
-		if dm.Data != em.Data {
-			t.Errorf("slot %d: Data got %v, want %v", i, dm.Data, em.Data)
+		dm.Info = ""
+		em.Info = ""
+		if !reflect.DeepEqual(dm, em) {
+			t.Errorf("slot %d:\n  got:  %+v\n  want: %+v", i, dm, em)
 		}
 	}
 }
@@ -213,16 +227,20 @@ func byteHex(b byte) string {
 	return string([]byte{hex[b>>4], hex[b&0xF]})
 }
 
-// TestPresetWireRoundTrip is the load-bearing fidelity test. It takes
-// a real captured preset frame (wire bytes from the device), decodes
-// it into a Preset, re-encodes it, and compares the resulting bytes
-// against the original. Any difference means the SDK would corrupt
-// the device state on a read-then-write cycle.
+// TestPresetDumpToWriteTransform is the load-bearing fidelity test.
+// It takes a real captured dump frame, decodes it, re-encodes it for
+// the write direction, and requires the result to be EXACTLY the
+// original bytes with the two documented, deliberate transformations
+// applied:
 //
-// This catches bugs that struct-level round-trip tests miss — e.g.
-// "don't-care" fields in empty message slots that the device actually
-// preserves, or config tail bytes that get zeroed.
-func TestPresetWireRoundTrip(t *testing.T) {
+//  1. every message row's bytes [5]–[7] permuted from dump order
+//     (a, tg, c) to write order (c, a, tg), and
+//  2. the config row tail (bytes 13–31 of row tag 5) zeroed — the
+//     device dumps 0x01 there, the editor writes 0x00.
+//
+// Any other byte difference means a read-then-write cycle would
+// corrupt device state.
+func TestPresetDumpToWriteTransform(t *testing.T) {
 	framePath := findCapturedFrame(t, 0x06, 0x01)
 	if framePath == "" {
 		t.Skipf("no captured 06 01 frame in testdata/raw/")
@@ -237,69 +255,56 @@ func TestPresetWireRoundTrip(t *testing.T) {
 		t.Fatalf("parse %s: %v", framePath, err)
 	}
 
-	// Decode → encode → compare payload bytes.
 	decoded, err := sysex.DecodePresetFrame(frame.Payload)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	reencoded := sysex.EncodePresetFrame(decoded)
 
-	if len(reencoded) != len(frame.Payload) {
-		t.Fatalf("payload length: got %d, want %d", len(reencoded), len(frame.Payload))
+	expected := dumpToWritePayload(t, frame.Payload)
+	if len(reencoded) != len(expected) {
+		t.Fatalf("payload length: got %d, want %d", len(reencoded), len(expected))
 	}
 
-	// Compare byte-by-byte. The only accepted difference is the
-	// config row tail (bytes 13–31 of the 32-byte config row): the
-	// device sends 0x01 there but both the editor and SDK write
-	// 0x00 (reserved padding). We identify the config row's position
-	// dynamically by finding row tag 5.
-	configTailStart, configTailEnd := findConfigTailRange(frame.Payload)
-
 	diffs := 0
-	for i := range frame.Payload {
-		if reencoded[i] != frame.Payload[i] {
-			if i >= configTailStart && i < configTailEnd {
-				// Expected: device sends 0x01, we write 0x00.
-				continue
-			}
+	for i := range expected {
+		if reencoded[i] != expected[i] {
 			if diffs < 20 {
-				t.Errorf("byte[%d]: got 0x%02X, want 0x%02X", i, reencoded[i], frame.Payload[i])
+				t.Errorf("byte[%d]: got 0x%02X, want 0x%02X", i, reencoded[i], expected[i])
 			}
 			diffs++
 		}
 	}
-	if diffs > 20 {
-		t.Errorf("... and %d more byte differences", diffs-20)
-	}
 	if diffs > 0 {
-		t.Errorf("total unexpected byte differences: %d out of %d", diffs, len(frame.Payload))
+		t.Errorf("total unexpected byte differences: %d out of %d", diffs, len(expected))
 	}
 }
 
-// findConfigTailRange returns the byte range [start, end) within a
-// preset payload that corresponds to the reserved config tail bytes
-// (bytes 13–31 of the 32-byte config row, tag 5).
-func findConfigTailRange(payload []byte) (int, int) {
+// dumpToWritePayload applies the documented dump→write transformations
+// to a captured dump payload: message-row [5..7] permutation
+// (a,tg,c)→(c,a,tg) and config-tail zeroing. It walks the 7F-framed
+// rows directly, independent of the codec under test.
+func dumpToWritePayload(t *testing.T, dump []byte) []byte {
+	t.Helper()
+	out := append([]byte(nil), dump...)
 	i := 0
-	for i < len(payload) {
-		if payload[i] != 0x7F {
-			break
+	for i+2 < len(out) {
+		if out[i] != 0x7F {
+			t.Fatalf("payload offset %d: expected row marker 0x7F, got 0x%02X", i, out[i])
 		}
-		tag := payload[i+1]
-		length := int(payload[i+2])
-		dataStart := i + 3
-		if tag == 0x05 && length == 32 {
-			// Config row: bytes 0-12 are decoded fields, 13-31 are reserved.
-			return dataStart + 13, dataStart + 32
+		tag, length := out[i+1], int(out[i+2])
+		data := i + 3
+		switch {
+		case tag == 0x01 && length == 23:
+			a, tg, c := out[data+5], out[data+6], out[data+7]
+			out[data+5], out[data+6], out[data+7] = c, a, tg
+		case tag == 0x05 && length == 32:
+			for j := 13; j < 32; j++ {
+				out[data+j] = 0
+			}
 		}
-		i = dataStart + length
+		i = data + length
 	}
-	return -1, -1 // not found; no exclusions
+	return out
 }
 
-func presetTestName(idx int, p mc8pro.Preset) string {
-	if p.ShortName != "" {
-		return "preset_" + byteHex(byte(idx)) + "_" + p.ShortName
-	}
-	return "preset_" + byteHex(byte(idx))
-}
