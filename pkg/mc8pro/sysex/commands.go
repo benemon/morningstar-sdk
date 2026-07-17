@@ -25,8 +25,10 @@ const (
 
 	// REQUEST_* — read-side commands. The device replies with one or
 	// more frames carrying the requested data.
-	CmdReqEngagePreset               = 29
-	CmdReqEngageExp                  = 30
+	CmdReqEngagePreset               = 29 // remote-trigger a preset press
+	CmdReqEngageExp                  = 30 // remote-trigger an expression engage
+	CmdSwapPreset                    = 24 // swap a main preset slot (device-side)
+	CmdSwapExpPreset                 = 25 // swap an expression preset slot (device-side)
 	CmdReqControllerSettingsAll      = 35
 	CmdReqControllerGeneralConfig    = 36
 	CmdReqWaveformEngine             = 37
@@ -72,12 +74,23 @@ const (
 	CmdWriteBank   = 0x12 // sendSysex6(6, 18, bank, 0, 0, 0, data)
 )
 
-// Cmd2 values for the upload envelope (Cmd1 = 0x04). Used only for
-// specific operations like bank-rearrange, NOT for regular preset or
-// bank writes.
+// Cmd2 values for the upload envelope (Cmd1 = 0x04). Used for
+// controller-settings writes. Each write is wrapped in
+// startTransmission / endTransmission.
 const (
-	CmdUploadStart = 0x00 // editor.js startTransmission()
-	CmdUploadEnd   = 0x01 // editor.js endTransmission()
+	CmdUploadStart          = 0x00 // editor.js startTransmission()
+	CmdUploadEnd            = 0x01 // editor.js endTransmission()
+	CmdUploadControllerCfg  = 0x02 // sendSysex(4, 2, data)
+	CmdUploadMidiChannels   = 0x03 // sysexBuilder(4, 3) — row-framed
+	CmdUploadBankArrange    = 0x04 // sendSysex4(4, 4, 0, 0, data)
+	CmdUploadWaveform       = 0x05 // sendSysex4(4, 5, 0, 0, data)
+	CmdUploadSequencer      = 0x06 // sendSysex4(4, 6, 0, 0, data)
+	CmdUploadScrollCounters = 0x07 // sendSysex4(4, 7, 0, 0, data)
+	CmdUploadOmniports      = 0x08 // sendSysex(4, 8, data)
+	CmdUploadPresetRearrange = 0x09 // sendSysex4(4, 9, 0, 0, data)
+	CmdUploadEventProcessor  = 0x0A // sendSysex4(4, 10, 0, 0, data)
+	CmdUploadResistorLadder = 0x0B // sendSysex(4, 11, data)
+	CmdUploadMidiClockSlots = 0x0C // sendSysex(4, 12, data)
 )
 
 // Cmd2 values for the backup family (Cmd1 = 0x07). These serve dual
@@ -94,6 +107,46 @@ const (
 const (
 	CmdBackupRequestSingleBank = 50 // 0x32 — dump current bank (MC8 Pro: 37 frames)
 	CmdBackupRequestAllBanks   = 51 // 0x33 — dump all banks + controller settings
+)
+
+// Restore protocol commands (Cmd1 = 0x07). The restore is the
+// inverse of the backup dump: the editor sends frames one at a
+// time, and the device ACKs each with (07, 00, arg=33) before
+// requesting the next. Discovered from editor.js:55888-55893
+// and the hasNewMessage handler at editor.js:55909-55957.
+const (
+	// CmdRestoreStartSingle tells the device to begin a single-bank
+	// restore. The device responds with (07, 00, arg=33) when ready
+	// for the first frame. editor.js:55889.
+	CmdRestoreStartSingle = 48 // 0x30 — sendSysexFunction(7, 0, 48, 0)
+
+	// CmdRestoreStartAll tells the device to begin an all-banks
+	// restore. Same handshake as single. editor.js:55892.
+	CmdRestoreStartAll = 48 // same cmd, arg[1]=1 distinguishes
+
+	// CmdRestoreComplete signals that all frames have been sent.
+	// The device responds with (07, 00, arg=17) on success or
+	// (07, 00, arg=3) on failure. editor.js:55884.
+	CmdRestoreComplete = 49 // 0x31 — sendSysexFunction(7, 0, 49, 0)
+
+	// CmdRestoreReadyForNext is the device's ACK: "send the next
+	// frame." Received as (07, 00, arg=33). editor.js:55951.
+	CmdRestoreReadyForNext = 33 // 0x21 — arg byte in (07, 00) response
+
+	// CmdRestoreDone is the device's final ACK: "upload complete."
+	// Received as (07, 00, arg=17). editor.js:55948.
+	CmdRestoreDone = 17 // 0x11 — arg byte in (07, 00) response
+
+	// CmdRestoreFailed is the device's error: "upload failed."
+	// Received as (07, 00, arg=3). editor.js:55940.
+	CmdRestoreFailed = 3 // 0x03 — arg byte in (07, 00) response
+
+	// Cmd2 values for restore data frames (Cmd1 = 0x07).
+	// These mirror the backup Cmd2 values but with different
+	// numbers for the upload direction.
+	CmdRestoreBankMeta = 0x10 // sendSysex(7, 16, data)     — editor.js:55671
+	CmdRestorePreset   = 0x11 // sendSysex4(7, 17, n, 0, d) — editor.js:55674
+	CmdRestoreExpPreset = 0x12 // sendSysex4(7, 18, n, 0, d) — editor.js:55677
 )
 
 // NoArgs is a convenience value for commands that take no arguments.

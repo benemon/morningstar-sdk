@@ -16,10 +16,12 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/benemon/morningstar-sdk/pkg/mc8pro"
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro/backup"
 )
 
 // integrationLogger returns an slog.Logger that writes to stderr at
@@ -427,5 +429,226 @@ func TestIntegrationDuplicatePreset(t *testing.T) {
 			restored.MsgArray[0].Type, originalG.MsgArray[0].Type)
 	} else {
 		t.Log("preset G restored successfully")
+	}
+}
+
+// TestIntegrationWriteBankConfig exercises WriteBankConfig with a
+// read→mutate→write→verify→restore cycle on the bank name. The
+// device should end in its original state.
+func TestIntegrationWriteBankConfig(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client, err := mc8pro.Open(ctx, mc8pro.OpenOptions{
+		Logger: integrationLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	// Step 1: navigate to bank 0 and capture original state.
+	if err := client.SelectBank(ctx, 0); err != nil {
+		t.Fatalf("SelectBank(0): %v", err)
+	}
+	state := client.State()
+	originalBank := state.Bank
+	t.Logf("original bank: name=%q, clearToggle=%v, bgColor=%d, textColor=%d",
+		originalBank.BankName, originalBank.BankClearToggle,
+		originalBank.BackgroundColor, originalBank.TextColor)
+
+	// Step 2: mutate the bank name — append " TEST".
+	modified := originalBank
+	modified.BankName = originalBank.BankName + " TEST"
+	t.Logf("mutating bank name: %q → %q", originalBank.BankName, modified.BankName)
+
+	// Step 3: write the modified bank config.
+	if err := client.WriteBankConfig(ctx, 0, modified); err != nil {
+		t.Fatalf("WriteBankConfig (modify): %v", err)
+	}
+
+	// Wait for flash commit.
+	time.Sleep(1500 * time.Millisecond)
+
+	// Step 4: re-read and verify.
+	if err := client.SelectBank(ctx, 0); err != nil {
+		t.Fatalf("SelectBank(0) after write: %v", err)
+	}
+	afterWrite := client.State().Bank
+	if afterWrite.BankName != modified.BankName {
+		t.Errorf("after write: bankName = %q, want %q",
+			afterWrite.BankName, modified.BankName)
+	} else {
+		t.Logf("write verified: bankName = %q", afterWrite.BankName)
+	}
+
+	// Step 5: RESTORE the original bank config.
+	if err := client.WriteBankConfig(ctx, 0, originalBank); err != nil {
+		t.Fatalf("WriteBankConfig (restore): %v", err)
+	}
+
+	time.Sleep(1500 * time.Millisecond)
+
+	// Step 6: verify the restore.
+	if err := client.SelectBank(ctx, 0); err != nil {
+		t.Fatalf("SelectBank(0) after restore: %v", err)
+	}
+	afterRestore := client.State().Bank
+	if afterRestore.BankName != originalBank.BankName {
+		t.Errorf("after restore: bankName = %q, want %q (original)",
+			afterRestore.BankName, originalBank.BankName)
+	} else {
+		t.Logf("restore verified: bankName = %q (original)", afterRestore.BankName)
+	}
+}
+
+// TestIntegrationBackupExport exercises the backup package export
+// against a live device: exports bank 0, verifies the JSON is
+// well-formed, writes to disk and reads back.
+func TestIntegrationBackupExport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := mc8pro.Open(ctx, mc8pro.OpenOptions{
+		Logger: integrationLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer client.Close()
+
+	// Step 1: export bank 0.
+	dump, err := backup.ExportBank(ctx, client, 0)
+	if err != nil {
+		t.Fatalf("ExportBank: %v", err)
+	}
+	t.Logf("exported bank %d: name=%q, presets=%d",
+		dump.Data.Bank.BankNumber, dump.Data.Bank.BankName,
+		len(dump.Data.Bank.PresetArray))
+
+	if dump.Data.Bank == nil {
+		t.Fatal("exported bank is nil")
+	}
+	if dump.DumpType != "singleBank" {
+		t.Errorf("DumpType = %q, want singleBank", dump.DumpType)
+	}
+
+	// Step 2: write to file, read back, verify round-trip.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bank0.json")
+	if err := backup.WriteFile(path, dump); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	loaded, err := backup.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if loaded.Data.Bank.BankName != dump.Data.Bank.BankName {
+		t.Errorf("round-trip bank name: got %q, want %q",
+			loaded.Data.Bank.BankName, dump.Data.Bank.BankName)
+	}
+	t.Logf("JSON file round-trip verified: %s", path)
+}
+
+// TestIntegrationBackupImport exports bank 0, imports it back with
+// a per-write throttle (200ms default), then verifies the device
+// state is unchanged.
+func TestIntegrationBackupImport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, err := mc8pro.Open(ctx, mc8pro.OpenOptions{
+		Logger: integrationLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer client.Close()
+
+	// Step 1: export bank 0 as our source data.
+	dump, err := backup.ExportBank(ctx, client, 0)
+	if err != nil {
+		t.Fatalf("ExportBank: %v", err)
+	}
+	t.Logf("exported bank %d: name=%q", dump.Data.Bank.BankNumber, dump.Data.Bank.BankName)
+
+	// Step 2: import back via restore protocol (device-paced handshake).
+	if err := backup.ImportBank(ctx, client, 0, dump); err != nil {
+		t.Fatalf("ImportBank: %v", err)
+	}
+	t.Log("import complete (restore protocol)")
+
+	// Step 3: brief settle, then verify.
+	time.Sleep(1 * time.Second)
+
+	if err := client.SelectBank(ctx, 0); err != nil {
+		t.Fatalf("SelectBank after import: %v", err)
+	}
+	after := client.State().Bank
+	if after.BankName != dump.Data.Bank.BankName {
+		t.Errorf("after import: bankName = %q, want %q",
+			after.BankName, dump.Data.Bank.BankName)
+	}
+	if after.PresetArray[0].ShortName != dump.Data.Bank.PresetArray[0].ShortName {
+		t.Errorf("after import: preset[0] = %q, want %q",
+			after.PresetArray[0].ShortName, dump.Data.Bank.PresetArray[0].ShortName)
+	}
+	t.Log("verified: device state unchanged after import round-trip")
+}
+
+// TestIntegrationListDevices verifies ListDevices finds at least one
+// MC8 Pro when the device is connected.
+func TestIntegrationListDevices(t *testing.T) {
+	devices := mc8pro.ListDevices()
+	if len(devices) == 0 {
+		t.Skip("no MC8 Pro found")
+	}
+	for _, d := range devices {
+		t.Logf("found: %s", d.Name)
+	}
+}
+
+// TestIntegrationSubscribe verifies that Subscribe delivers frames
+// during a bank select operation.
+func TestIntegrationSubscribe(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	client, err := mc8pro.Open(ctx, mc8pro.OpenOptions{
+		Logger: integrationLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer client.Close()
+
+	// Subscribe to all frames.
+	ch, unsub := client.Subscribe(nil)
+	defer unsub()
+
+	// Trigger a bank select — this generates device frames.
+	if err := client.SelectBank(ctx, 0); err != nil {
+		t.Fatalf("SelectBank: %v", err)
+	}
+
+	// Drain whatever we got.
+	var count int
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				t.Log("subscription channel closed")
+				goto done
+			}
+			count++
+		case <-time.After(500 * time.Millisecond):
+			goto done
+		}
+	}
+done:
+	if count == 0 {
+		t.Error("Subscribe received 0 frames; expected at least 1 from SelectBank")
+	} else {
+		t.Logf("Subscribe received %d frames during SelectBank", count)
 	}
 }

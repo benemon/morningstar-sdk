@@ -50,14 +50,36 @@ type State struct {
 	// the last bank; it is NOT a sentinel.
 	CurrentBank int
 
-	// Raw holds opaque bytes for every inbound frame type the SDK
-	// does not yet decode. Keys are (cmd1 << 8) | cmd2; values are
-	// the full frame payloads (not the 16-byte header). This lets
-	// the SDK round-trip unknown data losslessly during writes
-	// (Phase 4) without needing to understand every sub-section.
-	//
-	// As decoding support expands, entries move from Raw into
-	// typed fields and this map shrinks.
+	// Controller holds global device settings from the 11 00 frame.
+	Controller ControllerConfig
+
+	// WaveformEngines from the 03 26 frame.
+	WaveformEngines []WaveformEngine
+
+	// ResistorLadder from the 03 25 frame.
+	ResistorLadder []ResistorLadderSwitch
+
+	// MidiClockSlots from the 03 28 frame.
+	MidiClockSlots []MidiClockSlot
+
+	// BankArrangement from the 03 21 frame.
+	BankArrangement BankArrangement
+
+	// SequencerEngines from the 03 23 frame.
+	SequencerEngines []SequencerEngine
+
+	// Omniports from the 03 24 frame.
+	Omniports []OmniportInput
+
+	// MidiEvents from the 03 22 frame (10-byte header + 128-byte remap).
+	MidiEvents MidiEventProcessor
+
+	// MidiChannels from the 03 27 frame (16 channels).
+	MidiChannels [16]MidiChannel
+
+	// Raw holds opaque bytes for inbound frame types the SDK does
+	// not fully decode. Keys are (cmd1 << 8) | cmd2; values are the
+	// full frame payloads. As decoding expands, this map shrinks.
 	Raw map[uint16][]byte
 }
 
@@ -79,11 +101,36 @@ func NewState() State {
 // shares nothing with the original.
 func (s State) Clone() State {
 	out := State{
-		Device:      s.Device,
-		BankNames:   s.BankNames,
-		Bank:        s.Bank, // Bank is all arrays / values, no slices
-		CurrentBank: s.CurrentBank,
-		Raw:         make(map[uint16][]byte, len(s.Raw)),
+		Device:           s.Device,
+		BankNames:        s.BankNames,
+		Bank:             s.Bank, // Bank is all arrays / values, no slices
+		CurrentBank:      s.CurrentBank,
+		Controller:       s.Controller,
+		BankArrangement:  s.BankArrangement,
+		MidiEvents:       s.MidiEvents,
+		MidiChannels:     s.MidiChannels,
+		Raw:              make(map[uint16][]byte, len(s.Raw)),
+	}
+	// Deep-copy slices.
+	if s.WaveformEngines != nil {
+		out.WaveformEngines = make([]WaveformEngine, len(s.WaveformEngines))
+		copy(out.WaveformEngines, s.WaveformEngines)
+	}
+	if s.ResistorLadder != nil {
+		out.ResistorLadder = make([]ResistorLadderSwitch, len(s.ResistorLadder))
+		copy(out.ResistorLadder, s.ResistorLadder)
+	}
+	if s.MidiClockSlots != nil {
+		out.MidiClockSlots = make([]MidiClockSlot, len(s.MidiClockSlots))
+		copy(out.MidiClockSlots, s.MidiClockSlots)
+	}
+	if s.SequencerEngines != nil {
+		out.SequencerEngines = make([]SequencerEngine, len(s.SequencerEngines))
+		copy(out.SequencerEngines, s.SequencerEngines)
+	}
+	if s.Omniports != nil {
+		out.Omniports = make([]OmniportInput, len(s.Omniports))
+		copy(out.Omniports, s.Omniports)
 	}
 	for k, v := range s.Raw {
 		cp := make([]byte, len(v))

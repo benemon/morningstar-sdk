@@ -347,6 +347,241 @@ func (c *Client) WriteExpPreset(ctx context.Context, bank, expPresetNum int, p P
 	return nil
 }
 
+// WriteBankConfig writes the bank-level configuration for one bank:
+// name, description, config flags (clear toggle, colours, page limit),
+// and the 32 bank-level messages. Maps to cmd 06 12.
+//
+// This is fire-and-forget like WritePreset — the device does not send
+// an acknowledgment. The caller should allow ~1.5s for flash commit
+// before re-reading via SelectBank to verify.
+func (c *Client) WriteBankConfig(ctx context.Context, bank int, b Bank) error {
+	if bank < 0 || bank > 127 {
+		return fmt.Errorf("mc8pro: bank index %d out of range 0..127", bank)
+	}
+
+	b.BankNumber = bank
+
+	payload := sysex.EncodeBankMetaFrame(b)
+	frame := sysex.Build(
+		sysex.Cmd1Write,
+		sysex.CmdWriteBank,
+		[4]byte{byte(bank), 0x00, 0x00, 0x00},
+		payload,
+	)
+
+	c.log.Info("writing bank config",
+		slog.Int("bank", bank),
+		slog.Int("payload_bytes", len(payload)),
+	)
+
+	if err := c.port.Send(frame); err != nil {
+		return fmt.Errorf("mc8pro: send write-bank-config: %w", err)
+	}
+	return nil
+}
+
+// sendUpload wraps a controller-settings write in the
+// startTransmission / endTransmission envelope that the editor uses
+// for all 04 xx writes. cmd2 is the specific upload command (e.g.
+// CmdUploadControllerCfg = 0x02). args are the 4-byte arguments
+// (zero for most commands). payload is the encoded data.
+func (c *Client) sendUpload(cmd2 byte, args [4]byte, payload []byte) error {
+	// startTransmission
+	start := sysex.Build(sysex.Cmd1Upload, sysex.CmdUploadStart, sysex.NoArgs, nil)
+	if err := c.port.Send(start); err != nil {
+		return fmt.Errorf("mc8pro: send startTransmission: %w", err)
+	}
+
+	// data frame
+	data := sysex.Build(sysex.Cmd1Upload, cmd2, args, payload)
+	if err := c.port.Send(data); err != nil {
+		return fmt.Errorf("mc8pro: send upload cmd2=0x%02X: %w", cmd2, err)
+	}
+
+	// endTransmission
+	end := sysex.Build(sysex.Cmd1Upload, sysex.CmdUploadEnd, sysex.NoArgs, nil)
+	if err := c.port.Send(end); err != nil {
+		return fmt.Errorf("mc8pro: send endTransmission: %w", err)
+	}
+	return nil
+}
+
+// WriteControllerConfig writes the global device settings. Maps to
+// cmd 04 02 (wrapped in startTransmission/endTransmission).
+func (c *Client) WriteControllerConfig(ctx context.Context, cfg ControllerConfig) error {
+	payload := sysex.EncodeControllerConfig(cfg)
+	c.log.Info("writing controller config", slog.Int("payload_bytes", len(payload)))
+	return c.sendUpload(sysex.CmdUploadControllerCfg, sysex.NoArgs, payload)
+}
+
+// WriteWaveformEngines writes the waveform engine table. Maps to
+// cmd 04 05.
+func (c *Client) WriteWaveformEngines(ctx context.Context, engines []WaveformEngine) error {
+	payload := sysex.EncodeWaveformEngines(engines)
+	c.log.Info("writing waveform engines", slog.Int("count", len(engines)))
+	return c.sendUpload(sysex.CmdUploadWaveform, sysex.NoArgs, payload)
+}
+
+// WriteSequencerEngines writes the sequencer engine table. Maps to
+// cmd 04 06.
+func (c *Client) WriteSequencerEngines(ctx context.Context, engines []SequencerEngine) error {
+	payload := sysex.EncodeSequencerEngines(engines)
+	c.log.Info("writing sequencer engines", slog.Int("count", len(engines)))
+	return c.sendUpload(sysex.CmdUploadSequencer, sysex.NoArgs, payload)
+}
+
+// WriteOmniports writes the omniport / expression input table. Maps
+// to cmd 04 08.
+func (c *Client) WriteOmniports(ctx context.Context, ports []OmniportInput) error {
+	payload := sysex.EncodeOmniports(ports)
+	c.log.Info("writing omniports", slog.Int("count", len(ports)))
+	return c.sendUpload(sysex.CmdUploadOmniports, sysex.NoArgs, payload)
+}
+
+// WriteResistorLadder writes the aux switch calibration table. Maps
+// to cmd 04 0B.
+func (c *Client) WriteResistorLadder(ctx context.Context, switches []ResistorLadderSwitch) error {
+	payload := sysex.EncodeResistorLadder(switches)
+	c.log.Info("writing resistor ladder", slog.Int("count", len(switches)))
+	return c.sendUpload(sysex.CmdUploadResistorLadder, sysex.NoArgs, payload)
+}
+
+// WriteMidiClockSlots writes the MIDI clock BPM presets. Maps to
+// cmd 04 0C.
+func (c *Client) WriteMidiClockSlots(ctx context.Context, slots []MidiClockSlot) error {
+	payload := sysex.EncodeMidiClockSlots(slots)
+	c.log.Info("writing midi clock slots", slog.Int("count", len(slots)))
+	return c.sendUpload(sysex.CmdUploadMidiClockSlots, sysex.NoArgs, payload)
+}
+
+// WriteMidiEvents writes the MIDI event processor remap table. Maps
+// to cmd 04 0A.
+func (c *Client) WriteMidiEvents(ctx context.Context, ep MidiEventProcessor) error {
+	payload := sysex.EncodeMidiEvents(ep)
+	c.log.Info("writing midi events", slog.Int("payload_bytes", len(payload)))
+	return c.sendUpload(sysex.CmdUploadEventProcessor, sysex.NoArgs, payload)
+}
+
+// WriteMidiChannels writes the MIDI channel names, remap, and
+// attribute configuration. Maps to cmd 04 03 (row-framed).
+func (c *Client) WriteMidiChannels(ctx context.Context, channels [16]MidiChannel) error {
+	payload := sysex.EncodeMidiChannels(channels)
+	c.log.Info("writing midi channels", slog.Int("payload_bytes", len(payload)))
+	return c.sendUpload(sysex.CmdUploadMidiChannels, sysex.NoArgs, payload)
+}
+
+// WriteBankArrangement writes the bank ordering configuration. Maps
+// to cmd 04 04.
+func (c *Client) WriteBankArrangement(ctx context.Context, ba BankArrangement) error {
+	payload := sysex.EncodeBankArrangement(ba)
+	c.log.Info("writing bank arrangement", slog.Int("payload_bytes", len(payload)))
+	return c.sendUpload(sysex.CmdUploadBankArrange, sysex.NoArgs, payload)
+}
+
+// RearrangePresets reorders the presets within the current bank. The
+// order slice contains preset indices in the desired new order — e.g.
+// [6, 0, 1, 2, 3, 4, 5, 7, ...] moves preset G to position A and
+// shifts the rest. The device handles the data shuffling internally.
+// Maps to cmd 04 09.
+//
+// The slice length should match the number of preset slots for the
+// device (24 for MC8 Pro main presets).
+func (c *Client) RearrangePresets(ctx context.Context, order []int) error {
+	payload := make([]byte, len(order))
+	for i, idx := range order {
+		payload[i] = byte(idx)
+	}
+	c.log.Info("rearranging presets", slog.Int("count", len(order)))
+	return c.sendUpload(sysex.CmdUploadPresetRearrange, sysex.NoArgs, payload)
+}
+
+// SwapPreset triggers the device-side preset swap for a main preset
+// slot. The editor's "swap preset" feature works by: (1) user copies
+// a preset in the editor UI (stored client-side), (2) editor sends
+// cmd 0,24 to tell the device to swap. This is NOT a clipboard
+// copy/paste — the data movement is handled by the editor writing
+// the preset data, then sending this command to signal completion.
+// Maps to cmd 00 18 (sendSysexFunction(0, 24)).
+//
+// Note: for SDK callers, ReadBank + WritePreset achieves the same
+// result with full control over the data.
+func (c *Client) SwapPreset(ctx context.Context, presetNum int) error {
+	if presetNum < 0 || presetNum > 23 {
+		return fmt.Errorf("mc8pro: preset index %d out of range 0..23", presetNum)
+	}
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdSwapPreset, [4]byte{byte(presetNum)}, nil)
+	c.log.Info("swapping preset", slog.Int("preset", presetNum))
+	return c.port.Send(frame)
+}
+
+// SwapExpPreset triggers the device-side preset swap for an
+// expression preset slot. Same mechanics as SwapPreset but for
+// expression presets (indices 0..3).
+// Maps to cmd 00 19 (sendSysexFunction(0, 25)).
+func (c *Client) SwapExpPreset(ctx context.Context, expNum int) error {
+	if expNum < 0 || expNum > 3 {
+		return fmt.Errorf("mc8pro: expression preset index %d out of range 0..3", expNum)
+	}
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdSwapExpPreset, [4]byte{byte(expNum)}, nil)
+	c.log.Info("swapping expression preset", slog.Int("exp", expNum))
+	return c.port.Send(frame)
+}
+
+// EngagePreset remotely triggers a preset switch press, as if the
+// user physically pressed the footswitch. Maps to cmd 00 1D
+// (ENGAGE_PRESET, sendSysexFunction(0, 29, preset)).
+func (c *Client) EngagePreset(ctx context.Context, presetNum int) error {
+	if presetNum < 0 || presetNum > 23 {
+		return fmt.Errorf("mc8pro: preset index %d out of range 0..23", presetNum)
+	}
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdReqEngagePreset, [4]byte{byte(presetNum)}, nil)
+	c.log.Info("engaging preset", slog.Int("preset", presetNum))
+	return c.port.Send(frame)
+}
+
+// EngageExpression remotely triggers an expression preset. Maps to
+// cmd 00 1E (ENGAGE_EXP, sendSysexFunction(0, 30, exp)).
+func (c *Client) EngageExpression(ctx context.Context, expNum int) error {
+	if expNum < 0 || expNum > 3 {
+		return fmt.Errorf("mc8pro: expression preset index %d out of range 0..3", expNum)
+	}
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdReqEngageExp, [4]byte{byte(expNum)}, nil)
+	c.log.Info("engaging expression", slog.Int("exp", expNum))
+	return c.port.Send(frame)
+}
+
+// ToggleLooperMode toggles the device's looper mode on or off. Maps
+// to cmd 00 2F (TOGGLE_LOOPER_MODE, sendSysexFunction(0, 47)).
+func (c *Client) ToggleLooperMode(ctx context.Context) error {
+	frame := sysex.Build(sysex.Cmd1General, sysex.CmdToggleLooperMode, sysex.NoArgs, nil)
+	c.log.Info("toggling looper mode")
+	return c.port.Send(frame)
+}
+
+// Subscribe registers a listener for incoming SysEx frames that match
+// the provided filter function. Every frame for which filter returns
+// true is delivered to the returned channel. A nil filter matches all
+// frames.
+//
+// The caller MUST call cancel when done to release the subscription.
+// The channel is closed when cancel is called or when the Client is
+// closed.
+//
+// This exposes the internal router for external consumers that need
+// real-time device events — for example, a GUI that wants to react
+// when the user physically switches banks on the device.
+//
+//	ch, cancel := client.Subscribe(func(f sysex.Frame) bool {
+//	    return f.Cmd1 == 0x06 && f.Cmd2 == 0x01 // preset data frames
+//	})
+//	defer cancel()
+//	for frame := range ch {
+//	    // handle frame
+//	}
+func (c *Client) Subscribe(filter func(sysex.Frame) bool) (<-chan sysex.Frame, func()) {
+	return c.router.subscribe(filter)
+}
+
 // SelectBank changes the device's currently-focused bank to the
 // given index (0..127) and collects the resulting dump into State.
 // The device's LCD updates to show the new bank.
@@ -532,6 +767,173 @@ func (c *Client) ReadBank(ctx context.Context) error {
 
 		case <-hardDeadline.C:
 			return fmt.Errorf("mc8pro: bank backup timed out after 10s (%d frames received)", frameCount)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// RestoreBank uploads a complete bank to the device using the restore
+// protocol — the inverse of the ReadBank backup protocol. The device
+// drives the pace: after each frame we send, it ACKs with
+// (07, 00, arg=33) before we send the next. This avoids the flash
+// commit timing issues that plague fire-and-forget writes.
+//
+// The protocol (from editor.js:55693-55957):
+//  1. SDK → Device: (07, 00, arg=48, 0) — start single-bank restore
+//  2. Device → SDK: (07, 00, arg=33) — ready for next frame
+//  3. SDK → Device: bank metadata (07, 16, payload)
+//  4. Device → SDK: (07, 00, arg=33)
+//  5. SDK → Device: preset 0 (07, 17, presetNum, 0, payload)
+//     ... repeat for all 24 presets and 4 expression presets ...
+//  6. SDK → Device: (07, 00, arg=49, 0) — restore complete
+//  7. Device → SDK: (07, 00, arg=17) — "completed" / (07, 00, arg=3) — "failed"
+func (c *Client) RestoreBank(ctx context.Context, bank Bank) error {
+	c.log.Info("starting bank restore",
+		slog.Int("bank", bank.BankNumber),
+		slog.String("name", bank.BankName),
+	)
+
+	// Subscribe to backup-family responses (07 xx).
+	ch, cancel := c.router.subscribe(func(f sysex.Frame) bool {
+		return f.Cmd1 == sysex.Cmd1Backup && f.Cmd2 == sysex.CmdBackupHeader
+	})
+	defer cancel()
+
+	// Step 1: tell the device to start a single-bank restore.
+	startReq := sysex.Build(
+		sysex.Cmd1Backup,
+		sysex.CmdBackupHeader,
+		[4]byte{sysex.CmdRestoreStartSingle, 0, 0, 0},
+		nil,
+	)
+	startReq[sysex.OffsetModel] = 0x08
+	startReq[len(startReq)-2] = sysex.Checksum(startReq)
+	if err := c.port.Send(startReq); err != nil {
+		return fmt.Errorf("mc8pro: send restore-start: %w", err)
+	}
+
+	// Wait for device ready ACK (07, 00, arg=33).
+	if err := c.waitRestoreReady(ctx, ch); err != nil {
+		return fmt.Errorf("mc8pro: restore start handshake: %w", err)
+	}
+
+	// Step 2: build the frame queue — bank metadata first, then
+	// presets, then expression presets. Matches editor.js:55697-55729.
+	type restoreFrame struct {
+		name    string
+		frame   []byte
+	}
+	var queue []restoreFrame
+
+	// Bank metadata.
+	bankPayload := sysex.EncodeBankMetaFrame(bank)
+	bankFrame := sysex.Build(sysex.Cmd1Backup, sysex.CmdRestoreBankMeta, sysex.NoArgs, bankPayload)
+	bankFrame[sysex.OffsetModel] = 0x08
+	bankFrame[len(bankFrame)-2] = sysex.Checksum(bankFrame)
+	queue = append(queue, restoreFrame{"bank-meta", bankFrame})
+
+	// 24 main presets.
+	for i, p := range bank.PresetArray {
+		p.BankNum = bank.BankNumber
+		p.PresetNum = i
+		p.IsExp = false
+		payload := sysex.EncodePresetFrame(p)
+		frame := sysex.Build(sysex.Cmd1Backup, sysex.CmdRestorePreset, [4]byte{byte(i), 0, 0, 0}, payload)
+		frame[sysex.OffsetModel] = 0x08
+		frame[len(frame)-2] = sysex.Checksum(frame)
+		queue = append(queue, restoreFrame{fmt.Sprintf("preset-%d", i), frame})
+	}
+
+	// 4 expression presets.
+	for i, p := range bank.ExpPresetArray {
+		p.BankNum = bank.BankNumber
+		p.PresetNum = i
+		p.IsExp = true
+		payload := sysex.EncodePresetFrame(p)
+		frame := sysex.Build(sysex.Cmd1Backup, sysex.CmdRestoreExpPreset, [4]byte{byte(i), 0, 0, 0}, payload)
+		frame[sysex.OffsetModel] = 0x08
+		frame[len(frame)-2] = sysex.Checksum(frame)
+		queue = append(queue, restoreFrame{fmt.Sprintf("exp-preset-%d", i), frame})
+	}
+
+	// Step 3: send each frame, waiting for device ACK between each.
+	for n, qf := range queue {
+		c.log.Debug("sending restore frame",
+			slog.Int("n", n+1),
+			slog.Int("total", len(queue)),
+			slog.String("name", qf.name),
+			slog.Int("bytes", len(qf.frame)),
+		)
+		if err := c.port.Send(qf.frame); err != nil {
+			return fmt.Errorf("mc8pro: send restore frame %s: %w", qf.name, err)
+		}
+
+		// Wait for device ready (07, 00, arg=33) before sending next.
+		if err := c.waitRestoreReady(ctx, ch); err != nil {
+			return fmt.Errorf("mc8pro: restore ACK after %s: %w", qf.name, err)
+		}
+	}
+
+	// Step 4: signal completion.
+	completeReq := sysex.Build(
+		sysex.Cmd1Backup,
+		sysex.CmdBackupHeader,
+		[4]byte{sysex.CmdRestoreComplete, 0, 0, 0},
+		nil,
+	)
+	completeReq[sysex.OffsetModel] = 0x08
+	completeReq[len(completeReq)-2] = sysex.Checksum(completeReq)
+	if err := c.port.Send(completeReq); err != nil {
+		return fmt.Errorf("mc8pro: send restore-complete: %w", err)
+	}
+
+	// Wait for the done signal. The device sends (07,00,arg=3) then
+	// (07,00,arg=17) as part of the normal completion handshake —
+	// arg=3 is NOT a failure. Confirmed by Protokol capture of a
+	// successful editor restore. Loop until arg=17.
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case frame, ok := <-ch:
+			if !ok {
+				return errors.New("mc8pro: subscription closed during restore completion")
+			}
+			if frame.Args[0] == sysex.CmdRestoreDone {
+				c.log.Info("bank restore complete", slog.Int("frames_sent", len(queue)))
+				return nil
+			}
+			c.log.Debug("restore completion interim frame", slog.Int("arg", int(frame.Args[0])))
+		case <-timeout.C:
+			return errors.New("mc8pro: timed out waiting for restore completion")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// waitRestoreReady waits for the device's "ready for next frame" ACK:
+// a (07, 00) frame with arg[0]=33. Returns an error on timeout or
+// unexpected responses.
+func (c *Client) waitRestoreReady(ctx context.Context, ch <-chan sysex.Frame) error {
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case frame, ok := <-ch:
+			if !ok {
+				return errors.New("subscription closed")
+			}
+			if frame.Args[0] == sysex.CmdRestoreReadyForNext {
+				return nil
+			}
+			// The device may send other (07,00) frames during the
+			// restore flow. Keep waiting for the ready signal.
+			c.log.Debug("restore: skipping non-ready frame",
+				slog.Int("arg", int(frame.Args[0])))
+		case <-timeout.C:
+			return errors.New("timed out waiting for device ready")
 		case <-ctx.Done():
 			return ctx.Err()
 		}

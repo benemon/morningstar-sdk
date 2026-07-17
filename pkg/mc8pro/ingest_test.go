@@ -113,10 +113,9 @@ func TestIngestBankNamesFrame(t *testing.T) {
 // TestIngestUnknownFrameGoesToRaw verifies that a frame type we
 // don't decode is stored in the Raw passthrough map.
 func TestIngestUnknownFrameGoesToRaw(t *testing.T) {
-	// Use a 03 25 frame (resistor ladder calibration / expression
-	// curves) — we don't decode it in Phase 3, so it should land
-	// in Raw.
-	frame := parseFixture(t, "009_0325_len0163.sysex")
+	// Use a 03 29 frame (unknown small config) — we don't decode
+	// it, so it should land in Raw.
+	frame := parseFixture(t, "033_0329_len0052.sysex")
 
 	state := model.NewState()
 	ingestFrame(&state, frame, silentLogger)

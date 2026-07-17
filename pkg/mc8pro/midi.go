@@ -137,6 +137,27 @@ func findPort[T fmt.Stringer](ports []T, match string) (T, error) {
 	return zero, fmt.Errorf("no port matching %q", match)
 }
 
+// DevicePort describes one detected Morningstar MC8 Pro MIDI port
+// pair available on the system.
+type DevicePort struct {
+	Name string // driver-supplied port name (e.g. "Morningstar MC8 Pro Port 1")
+}
+
+// ListDevices enumerates all MIDI input ports whose name contains
+// "MC8 Pro" and returns them as DevicePort entries. This does not
+// open any ports or start a session — it's a pre-connection probe.
+// Returns an empty slice (not an error) if no devices are found.
+func ListDevices() []DevicePort {
+	var devices []DevicePort
+	for _, p := range midi.GetInPorts() {
+		name := p.String()
+		if strings.Contains(name, "MC8 Pro") {
+			devices = append(devices, DevicePort{Name: name})
+		}
+	}
+	return devices
+}
+
 // frameAttrs returns slog attributes describing a SysEx frame for
 // debug logging: length plus cmd1/cmd2 if the frame is long enough.
 // Returns a single []any so it spreads cleanly into log.Debug(...).

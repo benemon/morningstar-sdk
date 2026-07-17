@@ -86,14 +86,43 @@ func ingestFrame(state *model.State, frame sysex.Frame, log *slog.Logger) {
 		}
 
 	case (frame.Cmd1 == 0x06 || frame.Cmd1 == 0x07) && frame.Cmd2 == 0x02:
-		// Bank metadata frame (06 02 / 07 02). Contains bank index,
-		// bank-level messages, and bank name. For Phase 3 we decode
-		// only the bank name (row tag 3, 32-char ASCII) and stash
-		// the rest as raw.
-		if name, ok := decodeBankNameFromMeta(frame.Payload); ok {
-			state.Bank.BankName = name
+		// Bank metadata frame (06 02 / 07 02). Contains bank number,
+		// bank config flags, bank-level messages, bank name, and
+		// bank description.
+		bankMeta, err := sysex.DecodeBankMetaFrame(frame.Payload)
+		if err != nil {
+			log.Warn("bank metadata decode failed", slog.String("err", err.Error()))
+			return
 		}
+		state.Bank.BankName = bankMeta.BankName
+		state.Bank.BankDescription = bankMeta.BankDescription
+		state.Bank.BankClearToggle = bankMeta.BankClearToggle
+		state.Bank.ToDisplay = bankMeta.ToDisplay
+		state.Bank.BackgroundColor = bankMeta.BackgroundColor
+		state.Bank.TextColor = bankMeta.TextColor
+		state.Bank.IsColorEnabled = bankMeta.IsColorEnabled
+		state.Bank.PageLimit = bankMeta.PageLimit
+		state.Bank.BankMsgArray = bankMeta.BankMsgArray
+		// Also stash raw for round-trip fidelity of any fields we
+		// might not yet decode.
 		state.Raw[key] = copyBytes(frame.Payload)
+
+	case frame.Cmd1 == 0x11 && frame.Cmd2 == 0x05:
+		// Bank names (11 05). Paged: 8 bank names per frame, 16
+		// frames total covering all 128 banks. Row tags 0–127 map
+		// directly to bank indices. Each row is 32-byte ASCII.
+		rows, err := sysex.ParseRows(frame.Payload)
+		if err != nil {
+			log.Warn("bank names parse failed", slog.String("err", err.Error()))
+			return
+		}
+		for _, row := range rows {
+			idx := int(row.Tag)
+			if idx < 0 || idx >= len(state.BankNames) {
+				continue
+			}
+			state.BankNames[idx] = trimASCII(row.Data)
+		}
 
 	case (frame.Cmd1 == 0x09 && frame.Cmd2 == 0x01) || (frame.Cmd1 == 0x11 && frame.Cmd2 == 0x04):
 		// Preset shortnames frame (09 01 live / 11 04 mirror).
@@ -128,37 +157,95 @@ func ingestFrame(state *model.State, frame sysex.Frame, log *slog.Logger) {
 		}
 
 	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x20:
-		// Bank names table (03 20). Contains 16-char bank name rows
-		// for some range of banks. Populates State.BankNames at the
-		// indices carried in the row tags.
-		rows, err := sysex.ParseRows(frame.Payload)
+		// MIDI channel names + config (03 20). Previously
+		// mis-identified as "bank names" — verified by finding
+		// "Quad Cortex Mini" at tag 0x01 (channel 2).
+		//
+		// Tags 0x00–0x0F: 16-byte MIDI channel names (ASCII).
+		// Tags 0x10–0x1F: 4-byte channel remap/port config.
+		// Tags 0x20–0x2F: 16-byte channel attribute blocks.
+		channels, err := sysex.DecodeMidiChannels(frame.Payload)
 		if err != nil {
-			log.Warn("bank names parse failed", slog.String("err", err.Error()))
+			log.Warn("midi channels decode failed", slog.String("err", err.Error()))
+			state.Raw[key] = copyBytes(frame.Payload)
 			return
 		}
-		for _, row := range rows {
-			// The frame mixes row tags: 0x00..0x0F carry bank
-			// names (16 chars each). Rows 0x10+ hold other data
-			// we don't yet decode (stored in Raw via this case's
-			// fallthrough-style stash below).
-			if row.Tag > 0x0F {
-				continue
-			}
-			if len(row.Data) < 1 {
-				continue
-			}
-			// Row structure for tags 0x00..0x0F: length byte
-			// followed by <length> bytes of name. But ParseRows
-			// gives us just the data portion — wait, we need to
-			// double-check this. The row wire format is
-			// 7F <tag> <len> <data...> and ParseRows stores
-			// row.Data as the <data...> bytes with len==row_len.
-			// So for a 16-char bank name, row.Data is exactly 16
-			// bytes of ASCII. No additional length prefix.
-			state.BankNames[row.Tag] = trimASCII(row.Data)
+		state.MidiChannels = channels
+		// Also stash raw for round-trip fidelity.
+		state.Raw[key] = copyBytes(frame.Payload)
+
+	case frame.Cmd1 == 0x11 && frame.Cmd2 == 0x00:
+		// Global device settings (11 00). Purpose not yet fully
+		// identified; stash as raw for now.
+		state.Raw[key] = copyBytes(frame.Payload)
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x26:
+		// Waveform engines (03 26).
+		engines, err := sysex.DecodeWaveformEngines(frame.Payload)
+		if err != nil {
+			log.Warn("waveform engines decode failed", slog.String("err", err.Error()))
+			return
 		}
-		// Also stash raw for round-trip fidelity of the unknown
-		// trailing rows.
+		state.WaveformEngines = engines
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x25:
+		// Resistor ladder / aux switch calibration (03 25).
+		switches, err := sysex.DecodeResistorLadder(frame.Payload)
+		if err != nil {
+			log.Warn("resistor ladder decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.ResistorLadder = switches
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x28:
+		// MIDI clock slots (03 28).
+		slots, err := sysex.DecodeMidiClockSlots(frame.Payload)
+		if err != nil {
+			log.Warn("midi clock slots decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.MidiClockSlots = slots
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x21:
+		// Global controller settings (03 21, NOT bank arrangement
+		// as previously mis-identified — verified by JSON correlation).
+		cfg, err := sysex.DecodeControllerConfig(frame.Payload)
+		if err != nil {
+			log.Warn("controller config decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.Controller = cfg
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x23:
+		// Sequencer engines (03 23).
+		engines, err := sysex.DecodeSequencerEngines(frame.Payload)
+		if err != nil {
+			log.Warn("sequencer engines decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.SequencerEngines = engines
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x24:
+		// Omniport / expression inputs (03 24).
+		ports, err := sysex.DecodeOmniports(frame.Payload)
+		if err != nil {
+			log.Warn("omniports decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.Omniports = ports
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x22:
+		// MIDI event processor (03 22). 10-byte header + 128-byte remap.
+		ep, err := sysex.DecodeMidiEvents(frame.Payload)
+		if err != nil {
+			log.Warn("midi events decode failed", slog.String("err", err.Error()))
+			return
+		}
+		state.MidiEvents = ep
+
+	case frame.Cmd1 == 0x03 && frame.Cmd2 == 0x27:
+		// MIDI channel names (03 27). Layout not fully verified;
+		// stash as raw for now.
 		state.Raw[key] = copyBytes(frame.Payload)
 
 	default:
@@ -169,22 +256,6 @@ func ingestFrame(state *model.State, frame sysex.Frame, log *slog.Logger) {
 			slog.Int("payload_len", len(frame.Payload)))
 		state.Raw[key] = copyBytes(frame.Payload)
 	}
-}
-
-// decodeBankNameFromMeta pulls the bank name out of a 06 02 / 07 02
-// payload by scanning for row tag 3. Returns (name, true) on success
-// or ("", false) if no name row is present.
-func decodeBankNameFromMeta(payload []byte) (string, bool) {
-	rows, err := sysex.ParseRows(payload)
-	if err != nil {
-		return "", false
-	}
-	for _, row := range rows {
-		if row.Tag == 0x03 && len(row.Data) > 0 {
-			return trimASCII(row.Data), true
-		}
-	}
-	return "", false
 }
 
 // trimASCII interprets bytes as ASCII and trims trailing spaces.

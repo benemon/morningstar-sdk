@@ -12,14 +12,8 @@ import (
 )
 
 // TestPresetEncodeDecodeRoundTrip verifies that encode and decode are
-// inverses of each other, using a synthetic preset built from the
-// test fixture. This test runs unconditionally — no captured wire
-// bytes are required.
-//
-// It ONLY asserts equality of the fields that DecodePresetFrame
-// currently decodes (preset number, message array, and name fields).
-// Color/flag fields from the config row are not yet round-tripped and
-// are excluded from the comparison.
+// inverses of each other, using presets from the JSON fixture. All
+// decoded fields (header, messages, names, config row) are compared.
 func TestPresetEncodeDecodeRoundTrip(t *testing.T) {
 	dump := loadFixtureDump(t, "bank-guitar-live.json")
 	if dump.Data.Bank == nil {
@@ -35,13 +29,8 @@ func TestPresetEncodeDecodeRoundTrip(t *testing.T) {
 				t.Fatalf("DecodePresetFrame: %v", err)
 			}
 
-			// Trim original to only the fields the current decoder
-			// round-trips, so this test doesn't fail on fields we
-			// haven't decoded yet.
-			want := trimToDecoded(original)
-			got := trimToDecoded(decoded)
-			if !reflect.DeepEqual(want, got) {
-				t.Errorf("round-trip mismatch\n want: %+v\n  got: %+v", want, got)
+			if !reflect.DeepEqual(original, decoded) {
+				t.Errorf("round-trip mismatch\n want: %+v\n  got: %+v", original, decoded)
 			}
 		})
 	}
@@ -104,40 +93,75 @@ func TestPresetDecodeCapturedFrame(t *testing.T) {
 		t.Errorf("ShiftName: got %q, want %q", decoded.ShiftName, expected.ShiftName)
 	}
 
-	// Message comparison: populated slots must match byte-for-byte;
-	// empty slots must be empty in both. Any difference is reported
-	// per-slot with explicit field names.
+	// Config row fields should match.
+	if decoded.ToToggle != expected.ToToggle {
+		t.Errorf("ToToggle: got %v, want %v", decoded.ToToggle, expected.ToToggle)
+	}
+	if decoded.ToBlink != expected.ToBlink {
+		t.Errorf("ToBlink: got %v, want %v", decoded.ToBlink, expected.ToBlink)
+	}
+	if decoded.ToMsgScroll != expected.ToMsgScroll {
+		t.Errorf("ToMsgScroll: got %v, want %v", decoded.ToMsgScroll, expected.ToMsgScroll)
+	}
+	if decoded.ToggleGroup != expected.ToggleGroup {
+		t.Errorf("ToggleGroup: got %d, want %d", decoded.ToggleGroup, expected.ToggleGroup)
+	}
+	if decoded.LedColor != expected.LedColor {
+		t.Errorf("LedColor: got %d, want %d", decoded.LedColor, expected.LedColor)
+	}
+	if decoded.LedToggleColor != expected.LedToggleColor {
+		t.Errorf("LedToggleColor: got %d, want %d", decoded.LedToggleColor, expected.LedToggleColor)
+	}
+	if decoded.LedShiftColor != expected.LedShiftColor {
+		t.Errorf("LedShiftColor: got %d, want %d", decoded.LedShiftColor, expected.LedShiftColor)
+	}
+	if decoded.BackgroundColor != expected.BackgroundColor {
+		t.Errorf("BackgroundColor: got %d, want %d", decoded.BackgroundColor, expected.BackgroundColor)
+	}
+	if decoded.NameColor != expected.NameColor {
+		t.Errorf("NameColor: got %d, want %d", decoded.NameColor, expected.NameColor)
+	}
+	if decoded.NameToggleColor != expected.NameToggleColor {
+		t.Errorf("NameToggleColor: got %d, want %d", decoded.NameToggleColor, expected.NameToggleColor)
+	}
+	if decoded.NameShiftColor != expected.NameShiftColor {
+		t.Errorf("NameShiftColor: got %d, want %d", decoded.NameShiftColor, expected.NameShiftColor)
+	}
+	if decoded.ToggleBackgroundColor != expected.ToggleBackgroundColor {
+		t.Errorf("ToggleBackgroundColor: got %d, want %d", decoded.ToggleBackgroundColor, expected.ToggleBackgroundColor)
+	}
+	if decoded.ShiftBackgroundColor != expected.ShiftBackgroundColor {
+		t.Errorf("ShiftBackgroundColor: got %d, want %d", decoded.ShiftBackgroundColor, expected.ShiftBackgroundColor)
+	}
+
+	// Message comparison: compare populated message slots against the
+	// JSON fixture. We only compare M, Type, Action, and Data — the
+	// fields that define the message's behavior. Channel and
+	// ToggleGroup are excluded because the editor's JSON export
+	// normalizes these differently from the wire for some message
+	// types (e.g. Type=15 internal messages: wire has c=2/tg=1,
+	// editor exports c=1/tg=2). Empty slots are skipped entirely —
+	// their wire defaults differ from JSON. Wire byte-level fidelity
+	// for ALL slots is covered by TestPresetWireRoundTrip.
 	for i := range decoded.MsgArray {
 		dm := decoded.MsgArray[i]
 		em := expected.MsgArray[i]
-		switch {
-		case dm.Type == 0 && em.Type == 0:
-			// Both empty. Field values in the other fields are
-			// don't-care; skip comparison.
-		case dm.Type == 0:
-			t.Errorf("slot %d: expected populated (Type=%d), got empty", i, em.Type)
-		case em.Type == 0:
-			t.Errorf("slot %d: expected empty, got populated (Type=%d, Data=%v)", i, dm.Type, dm.Data)
-		default:
-			if !reflect.DeepEqual(dm, em) {
-				t.Errorf("slot %d: populated message mismatch\n got: %+v\nwant: %+v", i, dm, em)
-			}
+		if dm.Type == 0 && em.Type == 0 {
+			continue // both empty
 		}
-	}
-}
-
-// trimToDecoded zeros out every field that DecodePresetFrame does
-// NOT currently populate, so round-trip tests don't fail on fields
-// we haven't implemented yet. As decode coverage expands, this
-// function should shrink.
-func trimToDecoded(p mc8pro.Preset) mc8pro.Preset {
-	return mc8pro.Preset{
-		PresetNum:  p.PresetNum,
-		ShortName:  p.ShortName,
-		ToggleName: p.ToggleName,
-		LongName:   p.LongName,
-		ShiftName:  p.ShiftName,
-		MsgArray:   p.MsgArray,
+		if dm.Type != em.Type {
+			t.Errorf("slot %d: Type got %d, want %d", i, dm.Type, em.Type)
+			continue
+		}
+		if dm.M != em.M {
+			t.Errorf("slot %d: M got %d, want %d", i, dm.M, em.M)
+		}
+		if dm.Action != em.Action {
+			t.Errorf("slot %d: Action got %d, want %d", i, dm.Action, em.Action)
+		}
+		if dm.Data != em.Data {
+			t.Errorf("slot %d: Data got %v, want %v", i, dm.Data, em.Data)
+		}
 	}
 }
 
@@ -187,6 +211,90 @@ func findCapturedFrame(t *testing.T, cmd1, cmd2 byte) string {
 func byteHex(b byte) string {
 	const hex = "0123456789ABCDEF"
 	return string([]byte{hex[b>>4], hex[b&0xF]})
+}
+
+// TestPresetWireRoundTrip is the load-bearing fidelity test. It takes
+// a real captured preset frame (wire bytes from the device), decodes
+// it into a Preset, re-encodes it, and compares the resulting bytes
+// against the original. Any difference means the SDK would corrupt
+// the device state on a read-then-write cycle.
+//
+// This catches bugs that struct-level round-trip tests miss — e.g.
+// "don't-care" fields in empty message slots that the device actually
+// preserves, or config tail bytes that get zeroed.
+func TestPresetWireRoundTrip(t *testing.T) {
+	framePath := findCapturedFrame(t, 0x06, 0x01)
+	if framePath == "" {
+		t.Skipf("no captured 06 01 frame in testdata/raw/")
+	}
+
+	raw, err := os.ReadFile(framePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", framePath, err)
+	}
+	frame, err := sysex.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %s: %v", framePath, err)
+	}
+
+	// Decode → encode → compare payload bytes.
+	decoded, err := sysex.DecodePresetFrame(frame.Payload)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	reencoded := sysex.EncodePresetFrame(decoded)
+
+	if len(reencoded) != len(frame.Payload) {
+		t.Fatalf("payload length: got %d, want %d", len(reencoded), len(frame.Payload))
+	}
+
+	// Compare byte-by-byte. The only accepted difference is the
+	// config row tail (bytes 13–31 of the 32-byte config row): the
+	// device sends 0x01 there but both the editor and SDK write
+	// 0x00 (reserved padding). We identify the config row's position
+	// dynamically by finding row tag 5.
+	configTailStart, configTailEnd := findConfigTailRange(frame.Payload)
+
+	diffs := 0
+	for i := range frame.Payload {
+		if reencoded[i] != frame.Payload[i] {
+			if i >= configTailStart && i < configTailEnd {
+				// Expected: device sends 0x01, we write 0x00.
+				continue
+			}
+			if diffs < 20 {
+				t.Errorf("byte[%d]: got 0x%02X, want 0x%02X", i, reencoded[i], frame.Payload[i])
+			}
+			diffs++
+		}
+	}
+	if diffs > 20 {
+		t.Errorf("... and %d more byte differences", diffs-20)
+	}
+	if diffs > 0 {
+		t.Errorf("total unexpected byte differences: %d out of %d", diffs, len(frame.Payload))
+	}
+}
+
+// findConfigTailRange returns the byte range [start, end) within a
+// preset payload that corresponds to the reserved config tail bytes
+// (bytes 13–31 of the 32-byte config row, tag 5).
+func findConfigTailRange(payload []byte) (int, int) {
+	i := 0
+	for i < len(payload) {
+		if payload[i] != 0x7F {
+			break
+		}
+		tag := payload[i+1]
+		length := int(payload[i+2])
+		dataStart := i + 3
+		if tag == 0x05 && length == 32 {
+			// Config row: bytes 0-12 are decoded fields, 13-31 are reserved.
+			return dataStart + 13, dataStart + 32
+		}
+		i = dataStart + length
+	}
+	return -1, -1 // not found; no exclusions
 }
 
 func presetTestName(idx int, p mc8pro.Preset) string {

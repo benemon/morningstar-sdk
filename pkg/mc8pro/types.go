@@ -21,7 +21,10 @@
 // mc8pro.Bank is exactly equivalent to writing model.Bank.
 package mc8pro
 
-import "github.com/benemon/morningstar-sdk/pkg/mc8pro/model"
+import (
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro/model"
+	"github.com/benemon/morningstar-sdk/pkg/mc8pro/sysex"
+)
 
 // Re-exports of every public type from the model subpackage. These
 // are Go type aliases (note the `=`), which means the alias and the
@@ -40,4 +43,18 @@ type (
 	ControllerSettingsData  = model.ControllerSettingsData
 	OpaqueSection           = model.OpaqueSection
 	BankArrangementSection  = model.BankArrangementSection
+	ControllerConfig        = model.ControllerConfig
+	WaveformEngine          = model.WaveformEngine
+	ResistorLadderSwitch    = model.ResistorLadderSwitch
+	MidiClockSlot           = model.MidiClockSlot
+	BankArrangement         = model.BankArrangement
+	SequencerEngine         = model.SequencerEngine
+	OmniportInput           = model.OmniportInput
+	MidiEventProcessor      = model.MidiEventProcessor
+	MidiChannel             = model.MidiChannel
+
+	// Frame is the parsed SysEx frame type, re-exported so Subscribe
+	// consumers can work with frames without importing the sysex
+	// subpackage.
+	Frame = sysex.Frame
 )

@@ -1,14 +1,14 @@
 // mccapture connects to a Morningstar MC8 Pro on USB MIDI Port 1,
 // runs the editor's session-open + request-cascade handshake, and
-// writes every received SysEx frame to pkg/mc8/testdata/raw/ as a
-// binary file. These files become fixtures for the pkg/mc8/sysex
+// writes every received SysEx frame to pkg/mc8pro/testdata/raw/ as a
+// binary file. These files become fixtures for the pkg/mc8pro/sysex
 // unit tests.
 //
 // Run with the pedal connected and the web editor disconnected:
 //
 //	go run ./cmd/mccapture
 //
-// By default fixtures are written to pkg/mc8/testdata/raw/. Override
+// By default fixtures are written to pkg/mc8pro/testdata/raw/. Override
 // with -out=DIR.
 //
 // Filenames are NNN_CMD1CMD2_lenNNNN.sysex, where NNN is the order of

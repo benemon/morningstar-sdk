@@ -37,11 +37,8 @@ const configRowLen = 32
 
 // DecodePresetFrame takes the payload of a frame whose command is
 // (0x06 0x01) or (0x07 0x01) and returns a [model.Preset] populated
-// from the row contents.
-//
-// Fields that we don't yet decode (LED colors, toggle flags, preset
-// config flags from row 5) are left at their zero value. Message row
-// data is decoded fully.
+// from the row contents, including messages, names, and the config
+// row (toggle flags, LED colors, background colors).
 func DecodePresetFrame(payload []byte) (model.Preset, error) {
 	rows, err := ParseRows(payload)
 	if err != nil {
@@ -87,9 +84,7 @@ func DecodePresetFrame(payload []byte) (model.Preset, error) {
 		case PresetRowShiftName:
 			p.ShiftName = decodeASCII(row.Data)
 		case PresetRowConfig:
-			// TODO: decode config row 5 (LED colors, toggle flags,
-			// isExp, toToggle, etc). For now leave fields at zero
-			// and rely on round-trip from JSON for these fields.
+			decodeConfigRow(row.Data, &p)
 		default:
 			// Unknown row tag: ignore. A future protocol version
 			// may add rows; we don't want to reject them.
@@ -103,8 +98,8 @@ func DecodePresetFrame(payload []byte) (model.Preset, error) {
 }
 
 // decodeMessageRow decodes the 23-byte data portion of a PresetRowMessage
-// into a [model.Message]. The byte layout is from CLAUDE.md (verified by
-// cross-reference against the JSON backup schema):
+// into a [model.Message]. The byte layout was verified by correlating
+// wire capture byte values against known preset configuration:
 //
 //	[0]      m  (slot index 0..31)
 //	[1]      t  (message type)
@@ -112,9 +107,15 @@ func DecodePresetFrame(payload []byte) (model.Preset, error) {
 //	[3]      data[1]  (CC value for CC type)
 //	[4]      data[2]
 //	[5]      a  (action/trigger)
-//	[6]      c  (MIDI channel, 1-indexed)
+//	[6]      c  (MIDI channel)
 //	[7]      tg (toggle group)
 //	[8..22]  data[3..17]
+//
+// Verified: Overdrive preset has action=1(Press), channel=2. Wire
+// byte [5]=0x01, [6]=0x02. Therefore [5]=action, [6]=channel.
+// Note: editor.js:14856 calls getChannel() then getAction() but
+// the JS variable names are misleading — the push order into the
+// array does not match the semantic field names in the JS source.
 func decodeMessageRow(row []byte) model.Message {
 	var m model.Message
 	m.M = int(row[0])
@@ -141,19 +142,16 @@ func decodeASCII(b []byte) string {
 
 // EncodePresetFrame produces the payload bytes for a per-preset frame
 // from a [model.Preset]. The inverse of DecodePresetFrame.
-//
-// Important caveat: this only encodes the fields that DecodePresetFrame
-// decodes. Any field not round-tripped by the decoder (LED colors,
-// config flags) will be emitted as zero in the resulting bytes. This
-// means Encode(Decode(x)) == x holds, but Encode of a freshly-built
-// Preset with custom colors will not yet produce a frame that includes
-// those colors. Full config-row support is a TODO.
 func EncodePresetFrame(p model.Preset) []byte {
 	var out []byte
 
-	// Row 0: preset header. Layout per CLAUDE.md / captures:
-	// [0]=bank index, [1]=preset index, [2]=00, [3]=00.
-	out = BuildRow(out, PresetRowHeader, []byte{byte(p.BankNum), byte(p.PresetNum), 0x00, 0x00})
+	// Row 0: preset header.
+	// [0]=bank index, [1]=preset index, [2]=isExp, [3]=reserved.
+	isExp := byte(0)
+	if p.IsExp {
+		isExp = 1
+	}
+	out = BuildRow(out, PresetRowHeader, []byte{byte(p.BankNum), byte(p.PresetNum), isExp, 0x00})
 
 	// Rows 1×32: one message row per slot.
 	for i := range p.MsgArray {
@@ -162,15 +160,80 @@ func EncodePresetFrame(p model.Preset) []byte {
 	}
 
 	// Row 2: shortName. Row 3: toggleName. Row 4: longName.
-	// Row 5: config (emitted as zeros — TODO).
+	// Row 5: config (toggle flags + LED colors).
 	// Row 6: shiftName.
 	out = BuildRow(out, PresetRowShortName, encodeASCII(p.ShortName, nameRowLen))
 	out = BuildRow(out, PresetRowToggleName, encodeASCII(p.ToggleName, nameRowLen))
 	out = BuildRow(out, PresetRowLongName, encodeASCII(p.LongName, nameRowLen))
-	out = BuildRow(out, PresetRowConfig, make([]byte, configRowLen))
+	out = BuildRow(out, PresetRowConfig, encodeConfigRow(p))
 	out = BuildRow(out, PresetRowShiftName, encodeASCII(p.ShiftName, nameRowLen))
 
 	return out
+}
+
+// decodeConfigRow populates the preset's toggle/color fields from the
+// config row (tag 5) data. Handles three payload sizes:
+//   - 4 bytes: standard models (toggle flags only)
+//   - 6 bytes: intermediate (+ ledColor, ledToggleColor)
+//   - 32 bytes: Pro models (full 13 fields + 19 reserved)
+//
+// See CLAUDE.md "Preset config row layout" for the byte map.
+func decodeConfigRow(data []byte, p *model.Preset) {
+	if len(data) < 4 {
+		return
+	}
+	p.ToToggle = data[0] != 0
+	p.ToBlink = data[1] != 0
+	p.ToMsgScroll = data[2] != 0
+	p.ToggleGroup = int(data[3])
+
+	if len(data) >= 6 {
+		p.LedColor = int(data[4])
+		p.LedToggleColor = int(data[5])
+	}
+
+	if len(data) >= 13 {
+		p.LedShiftColor = int(data[6])
+		p.BackgroundColor = int(data[7])
+		p.NameColor = int(data[8])
+		p.NameToggleColor = int(data[9])
+		p.NameShiftColor = int(data[10])
+		p.ToggleBackgroundColor = int(data[11])
+		p.ShiftBackgroundColor = int(data[12])
+	}
+
+	// Bytes [13..31] are reserved (device sends 0x01, editor ignores
+	// them on decode and writes zeros on encode). We ignore them too.
+}
+
+// encodeConfigRow produces the 32-byte config row (tag 5) for an MC8
+// Pro preset. The inverse of decodeConfigRow.
+func encodeConfigRow(p model.Preset) []byte {
+	buf := make([]byte, configRowLen)
+	if p.ToToggle {
+		buf[0] = 1
+	}
+	if p.ToBlink {
+		buf[1] = 1
+	}
+	if p.ToMsgScroll {
+		buf[2] = 1
+	}
+	buf[3] = byte(p.ToggleGroup)
+	buf[4] = byte(p.LedColor)
+	buf[5] = byte(p.LedToggleColor)
+	buf[6] = byte(p.LedShiftColor)
+	buf[7] = byte(p.BackgroundColor)
+	buf[8] = byte(p.NameColor)
+	buf[9] = byte(p.NameToggleColor)
+	buf[10] = byte(p.NameShiftColor)
+	buf[11] = byte(p.ToggleBackgroundColor)
+	buf[12] = byte(p.ShiftBackgroundColor)
+	// Bytes [13..31] are reserved. The editor writes zeros here
+	// (editor.js:14921-14938). The device initialises them to 0x01
+	// but accepts zeros. We match the editor's behavior.
+	// buf[13:] is already zero from make().
+	return buf
 }
 
 // encodeMessageRow is the inverse of decodeMessageRow. See the comment
