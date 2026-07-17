@@ -32,7 +32,7 @@ type State struct {
 	Device Device
 
 	// BankNames holds the names of all 128 banks, indexed by bank
-	// number. Populated from the 03 20 bank-names frame. Only bank
+	// number. Populated from the 11 05 bank-names frames. Only bank
 	// slots with a non-empty name are meaningfully populated; the
 	// rest are space-padded empty strings that decodeASCII trims to
 	// "". This is used by the bank-picker UI.
@@ -71,20 +71,17 @@ type State struct {
 	// MidiChannels from the 03 20 frame (16 channels).
 	MidiChannels [16]MidiChannel
 
-	// The following sections are NOT currently populated. Their
-	// source frames (03 22 bank arrangement, 03 23 omniports, 03 24
-	// waveform, 03 25 sequencer, 03 26 scroll counters, 03 27 event
-	// processor, 03 28 resistor ladder — per the editor's dispatch,
-	// editor.js:91104-91152) are stashed in Raw until each codec is
-	// re-derived from the editor's manager classes; the SDK's earlier
-	// decoders were keyed to the wrong frames and produced
-	// wrong-section data.
+	// Controller-settings sections, one per source frame (03 22 bank
+	// arrangement, 03 23 omniports, 03 24 waveform, 03 25 sequencer,
+	// 03 26 scroll counters, 03 27 event processor, 03 28 resistor
+	// ladder — per the editor's dispatch, editor.js:91104-91152).
 	WaveformEngines  []WaveformEngine
 	ResistorLadder   []ResistorLadderSwitch
 	BankArrangement  BankArrangement
 	SequencerEngines []SequencerEngine
+	ScrollCounters   []ScrollCounter
 	Omniports        []OmniportInput
-	MidiEvents       MidiEventProcessor
+	MidiEvents       [16]MidiEvent
 
 	// Raw holds opaque bytes for inbound frame types the SDK does
 	// not fully decode. Keys are (cmd1 << 8) | cmd2; values are the
@@ -137,6 +134,10 @@ func (s State) Clone() State {
 	if s.SequencerEngines != nil {
 		out.SequencerEngines = make([]SequencerEngine, len(s.SequencerEngines))
 		copy(out.SequencerEngines, s.SequencerEngines)
+	}
+	if s.ScrollCounters != nil {
+		out.ScrollCounters = make([]ScrollCounter, len(s.ScrollCounters))
+		copy(out.ScrollCounters, s.ScrollCounters)
 	}
 	if s.Omniports != nil {
 		out.Omniports = make([]OmniportInput, len(s.Omniports))

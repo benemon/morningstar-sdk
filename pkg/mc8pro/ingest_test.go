@@ -84,29 +84,71 @@ func TestIngestPresetFrame(t *testing.T) {
 
 // TestIngestBankNamesFrame verifies that a 03 20 frame populates
 // State.BankNames at the row-tagged indices.
-func TestIngestBankNamesFrame(t *testing.T) {
+func TestIngestMidiChannelsFrame(t *testing.T) {
 	frame := parseFixture(t, "004_0320_len0738.sysex")
 
 	state := model.NewState()
 	ingestFrame(&state, frame, silentLogger)
 
-	// We don't know the exact names without inspecting the fixture
-	// in detail, but at least ONE of the first 16 BankNames should
-	// be populated if the test device has any configured banks. We
-	// assert the field is present (not panic) and document what we
-	// see.
-	found := 0
-	for i := 0; i < 16; i++ {
-		if state.BankNames[i] != "" {
-			found++
-		}
+	// The test device names MIDI channel 2 "Quad Cortex Mini".
+	if got := state.MidiChannels[1].Name; got != "Quad Cortex Mini" {
+		t.Errorf("channel 2 name: got %q, want %q", got, "Quad Cortex Mini")
 	}
-	t.Logf("populated bank names in first 16 slots: %d", found)
 
 	// The raw payload should also be stashed for round-trip fidelity.
 	key := uint16(0x03)<<8 | uint16(0x20)
 	if _, ok := state.Raw[key]; !ok {
 		t.Error("expected raw payload to be stashed for 03 20")
+	}
+}
+
+// TestIngestControllerSettingsFrames feeds the seven remapped
+// 03 22–03 28 captures through ingestFrame and verifies each
+// populates its typed State field (and is no longer stashed in Raw).
+func TestIngestControllerSettingsFrames(t *testing.T) {
+	state := model.NewState()
+	for _, name := range []string{
+		"012_0322_len0156.sysex",
+		"029_0323_len0082.sysex",
+		"007_0324_len0051.sysex",
+		"009_0325_len0163.sysex",
+		"010_0326_len0067.sysex",
+		"030_0327_len0242.sysex",
+		"031_0328_len0082.sysex",
+	} {
+		ingestFrame(&state, parseFixture(t, name), silentLogger)
+	}
+
+	if state.BankArrangement.NumBanksUsed != 127 {
+		t.Errorf("BankArrangement.NumBanksUsed: got %d, want 127", state.BankArrangement.NumBanksUsed)
+	}
+	if len(state.Omniports) != 4 {
+		t.Errorf("Omniports: got %d entries, want 4", len(state.Omniports))
+	}
+	if len(state.WaveformEngines) != 8 {
+		t.Errorf("WaveformEngines: got %d entries, want 8", len(state.WaveformEngines))
+	}
+	if len(state.SequencerEngines) != 8 {
+		t.Errorf("SequencerEngines: got %d entries, want 8", len(state.SequencerEngines))
+	}
+	if len(state.ScrollCounters) != 16 {
+		t.Errorf("ScrollCounters: got %d entries, want 16", len(state.ScrollCounters))
+	}
+	if len(state.ResistorLadder) != 16 {
+		t.Errorf("ResistorLadder: got %d entries, want 16", len(state.ResistorLadder))
+	}
+	// All 16 event slots are empty rules on the test device; spot-check
+	// the decode ran by checking the scroll counters' default range,
+	// which is non-zero on the wire.
+	for i, c := range state.ScrollCounters {
+		if c.Max != 127 {
+			t.Errorf("ScrollCounters[%d].Max: got %d, want 127", i, c.Max)
+		}
+	}
+	for _, cmd2 := range []uint16{0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28} {
+		if _, ok := state.Raw[0x0300|cmd2]; ok {
+			t.Errorf("frame 03 %02X unexpectedly stashed in Raw", cmd2)
+		}
 	}
 }
 

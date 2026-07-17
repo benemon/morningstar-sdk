@@ -460,12 +460,20 @@ func (c *Client) WriteMidiClockSlots(ctx context.Context, slots []MidiClockSlot)
 	return c.sendUpload(sysex.CmdUploadMidiClockSlots, sysex.NoArgs, payload)
 }
 
-// WriteMidiEvents writes the MIDI event processor remap table. Maps
-// to cmd 04 0A.
-func (c *Client) WriteMidiEvents(ctx context.Context, ep MidiEventProcessor) error {
-	payload := sysex.EncodeMidiEvents(ep)
+// WriteMidiEvents writes the 16 MIDI event processor rules. Maps to
+// cmd 04 0A.
+func (c *Client) WriteMidiEvents(ctx context.Context, events [16]MidiEvent) error {
+	payload := sysex.EncodeMidiEvents(events)
 	c.log.Info("writing midi events", slog.Int("payload_bytes", len(payload)))
 	return c.sendUpload(sysex.CmdUploadEventProcessor, sysex.NoArgs, payload)
+}
+
+// WriteScrollCounters writes the scroll counter table. Maps to cmd
+// 04 07.
+func (c *Client) WriteScrollCounters(ctx context.Context, counters []ScrollCounter) error {
+	payload := sysex.EncodeScrollCounters(counters)
+	c.log.Info("writing scroll counters", slog.Int("count", len(counters)))
+	return c.sendUpload(sysex.CmdUploadScrollCounters, sysex.NoArgs, payload)
 }
 
 // WriteMidiChannels writes the MIDI channel names, remap, and

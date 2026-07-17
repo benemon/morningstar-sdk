@@ -112,33 +112,36 @@ func EncodeControllerConfig(c model.ControllerConfig) []byte {
 	return d
 }
 
-// DecodeWaveformEngines decodes a waveform-engine payload.
-// PENDING REMAP: keyed to 03 26 under the old wrong mapping; waveform
-// data actually arrives on 03 24. Not called by ingest until re-derived.
-// Layout: [0]=count, then count × 3-byte entries [type, max, min].
+// DecodeWaveformEngines decodes the payload of a 03 24 frame
+// (waveform engines). Layout, from the editor's buildFromArray
+// (editor.js:13163-13174): [0]=count, then count × 4-byte entries
+// [engineNum, min, max, type].
 func DecodeWaveformEngines(payload []byte) ([]model.WaveformEngine, error) {
 	if len(payload) < 1 {
 		return nil, fmt.Errorf("sysex: waveform engines payload empty")
 	}
 	n := int(payload[0])
-	if len(payload) < 1+n*3 {
+	if len(payload) < 1+n*4 {
 		return nil, fmt.Errorf("sysex: waveform engines payload too short for %d engines", n)
 	}
 	engines := make([]model.WaveformEngine, n)
 	for i := 0; i < n; i++ {
-		off := 1 + i*3
+		off := 1 + i*4
 		engines[i] = model.WaveformEngine{
-			Min:  int(payload[off]),
-			Max:  int(payload[off+1]),
-			Type: int(payload[off+2]),
+			EngineNum: int(payload[off]),
+			Min:       int(payload[off+1]),
+			Max:       int(payload[off+2]),
+			Type:      int(payload[off+3]),
 		}
 	}
 	return engines, nil
 }
 
-// EncodeWaveformEngines produces the waveform-engine write payload
-// (04 05 upload). PENDING REMAP: shape unverified against the editor.
-// Byte order matches editor.js: [min, max, type] per engine.
+// EncodeWaveformEngines produces the WRITE payload for the 04 05
+// upload (sendControllerWaveformData at editor.js:15571-15584):
+// [count, then per engine min, max, type]. Note the asymmetry with
+// DecodeWaveformEngines: the dump carries the engine number in each
+// entry; the write omits it and relies on array order.
 func EncodeWaveformEngines(engines []model.WaveformEngine) []byte {
 	out := make([]byte, 1+len(engines)*3)
 	out[0] = byte(len(engines))
@@ -151,42 +154,92 @@ func EncodeWaveformEngines(engines []model.WaveformEngine) []byte {
 	return out
 }
 
-// DecodeResistorLadder decodes a resistor-ladder payload.
-// PENDING REMAP: keyed to 03 25 under the old wrong mapping; resistor
-// ladder data actually arrives on 03 28. Not called by ingest until
-// re-derived.
-// Layout: [0]=count, then count × 4-byte entries, rest is padding.
+// DecodeScrollCounters decodes the payload of a 03 26 frame (scroll
+// counters). Layout, from the editor's buildFromArray
+// (editor.js:12199-12211): [0]&0x1F=count, then count × 3-byte
+// entries [min, max, startAt]. The editor sanitises inverted ranges
+// (max <= min becomes 0..127); the SDK preserves the wire values
+// instead so a read→write cycle is byte-faithful.
+func DecodeScrollCounters(payload []byte) ([]model.ScrollCounter, error) {
+	if len(payload) < 1 {
+		return nil, fmt.Errorf("sysex: scroll counters payload empty")
+	}
+	n := int(payload[0] & 0x1F)
+	if len(payload) < 1+n*3 {
+		return nil, fmt.Errorf("sysex: scroll counters payload too short for %d slots", n)
+	}
+	counters := make([]model.ScrollCounter, n)
+	for i := 0; i < n; i++ {
+		off := 1 + i*3
+		counters[i] = model.ScrollCounter{
+			Min:   int(payload[off]),
+			Max:   int(payload[off+1]),
+			Start: int(payload[off+2]),
+		}
+	}
+	return counters, nil
+}
+
+// EncodeScrollCounters produces the WRITE payload for the 04 07
+// upload (sendSlotCounterData at editor.js:15605-15612), which is the
+// same layout as the dump: [count, then per slot min, max, startAt].
+func EncodeScrollCounters(counters []model.ScrollCounter) []byte {
+	out := make([]byte, 1+len(counters)*3)
+	out[0] = byte(len(counters))
+	for i, c := range counters {
+		off := 1 + i*3
+		out[off] = byte(c.Min)
+		out[off+1] = byte(c.Max)
+		out[off+2] = byte(c.Start)
+	}
+	return out
+}
+
+// DecodeResistorLadder decodes the payload of a 03 28 frame (aux
+// switch calibration). Layout, from the editor's buildFromArray
+// (editor.js:13933-13951): [0]=count, then count × 4-byte entries
+// [switchNumber, triggerValue, f1, f2].
+//
+// The MC8 Pro's dump of this frame is one byte SHORT: the payload is
+// 64 bytes but 16 switches need 65, so the final switch's f2 byte is
+// missing. The editor reads undefined there and masks it to 0; we
+// treat any bytes missing from the final entry as 0 the same way.
 func DecodeResistorLadder(payload []byte) ([]model.ResistorLadderSwitch, error) {
 	if len(payload) < 1 {
 		return nil, fmt.Errorf("sysex: resistor ladder payload empty")
 	}
 	n := int(payload[0])
-	if len(payload) < 1+n*4 {
+	// Tolerate a truncated final entry (device firmware quirk) but
+	// not a payload short by more than one entry's worth.
+	if len(payload) < 1+(n-1)*4 {
 		return nil, fmt.Errorf("sysex: resistor ladder payload too short for %d switches", n)
+	}
+	at := func(i int) byte {
+		if i < len(payload) {
+			return payload[i]
+		}
+		return 0
 	}
 	switches := make([]model.ResistorLadderSwitch, n)
 	for i := 0; i < n; i++ {
 		off := 1 + i*4
 		switches[i] = model.ResistorLadderSwitch{
-			SwitchNumber: int(payload[off]),
-			TriggerValue: int(payload[off+1]),
-			F1:           int(payload[off+2]),
-			F2:           int(payload[off+3]),
+			SwitchNumber: int(at(off)),
+			TriggerValue: int(at(off + 1)),
+			F1:           int(at(off + 2)),
+			F2:           int(at(off + 3)),
 		}
 	}
 	return switches, nil
 }
 
-// EncodeResistorLadder produces the resistor-ladder write payload
-// (04 0B upload). PENDING REMAP: shape unverified against the editor.
-// Pads to 145 bytes to match observed wire length.
+// EncodeResistorLadder produces the WRITE payload for the 04 0B
+// upload (sendResistorLadderAuxSwitchData at editor.js:15680-15685,
+// sending the manager's toArray): [count, then per switch
+// switchNumber, triggerValue, f1, f2]. No padding — the editor sends
+// exactly 1+4n bytes.
 func EncodeResistorLadder(switches []model.ResistorLadderSwitch) []byte {
-	dataLen := 1 + len(switches)*4
-	padLen := 145
-	if dataLen > padLen {
-		padLen = dataLen
-	}
-	out := make([]byte, padLen)
+	out := make([]byte, 1+len(switches)*4)
 	out[0] = byte(len(switches))
 	for i, s := range switches {
 		off := 1 + i*4
@@ -261,149 +314,218 @@ func EncodeMidiClockSlots(slots []model.MidiClockSlot) []byte {
 	return out
 }
 
-// DecodeBankArrangement decodes a bank-arrangement payload.
-// PENDING REMAP: was keyed to 03 21 under the old wrong mapping (03 21
-// is controller settings); bank arrangement actually arrives on 03 22.
-// Not called by ingest until re-derived.
+// DecodeBankArrangement decodes the payload of a 03 22 frame (bank
+// arrangement). Layout, from the editor's readFromArray
+// (editor.js:12668-12681):
+//
+//	[0]      isActive
+//	[1]      count field: 0 = "scan all slots", else count-1
+//	[2..9]   reserved
+//	[10..]   bank order table, one byte per slot (128 on the MC8
+//	         Pro), 127 = unused slot
+//
+// NumBanksUsed follows the editor's read semantics: with a zero
+// count field it is the number of non-127 entries; otherwise it is
+// count field + 1.
 func DecodeBankArrangement(payload []byte) (model.BankArrangement, error) {
-	if len(payload) < 40 {
+	if len(payload) < 10+len(model.BankArrangement{}.BankOrder) {
 		return model.BankArrangement{}, fmt.Errorf("sysex: bank arrangement payload too short (%d bytes)", len(payload))
 	}
 	var ba model.BankArrangement
 	ba.IsActive = payload[0] != 0
-	ba.NumBanksUsed = int(payload[1]) + 1
-	for i := 0; i < 30; i++ {
+	for i := range ba.BankOrder {
 		ba.BankOrder[i] = int(payload[10+i])
+	}
+	if count := int(payload[1]); count != 0 {
+		ba.NumBanksUsed = count + 1
+	} else {
+		for _, b := range ba.BankOrder {
+			if b != 127 {
+				ba.NumBanksUsed++
+			}
+		}
 	}
 	return ba, nil
 }
 
-// EncodeBankArrangement produces the bank-arrangement write payload
-// (04 04 upload). PENDING REMAP: shape unverified against the editor.
+// EncodeBankArrangement produces the WRITE payload for the 04 04
+// upload (sendControllerBankArrangementData at editor.js:15654-15666):
+// [isActive, activeCount-1, 8 reserved zero bytes, then the full
+// 128-slot bank order table with 127 for unused slots]. An empty
+// active list encodes count-1 as 0 rather than replicating the
+// editor's underflow to 127.
 func EncodeBankArrangement(ba model.BankArrangement) []byte {
-	out := make([]byte, 50)
+	out := make([]byte, 10+len(ba.BankOrder))
 	if ba.IsActive {
 		out[0] = 1
 	}
-	n := ba.NumBanksUsed
-	if n > 0 {
-		n--
+	if ba.NumBanksUsed > 0 {
+		out[1] = byte(ba.NumBanksUsed - 1)
 	}
-	out[1] = byte(n)
-	for i := 0; i < 30; i++ {
-		out[10+i] = byte(ba.BankOrder[i])
+	for i, b := range ba.BankOrder {
+		out[10+i] = byte(b)
 	}
 	return out
 }
 
-// DecodeSequencerEngines decodes a sequencer-engine payload.
-// PENDING REMAP: keyed to 03 23 under the old wrong mapping; sequencer
-// data actually arrives on 03 25. Not called by ingest until re-derived.
-// Layout: [0]=count, then count × 11-byte entries [engineNum, len, arr[9]].
-// Trailing bytes are padding.
+// DecodeSequencerEngines decodes the payload of a 03 25 frame
+// (sequencer engines). Layout, from the editor's buildFromArray
+// (editor.js:13281-13293): [0]=count, then count × 18-byte entries
+// [len&0x0F, reserved, arr[0..15]]. The engine number is not on the
+// wire — it is the entry's position.
 func DecodeSequencerEngines(payload []byte) ([]model.SequencerEngine, error) {
 	if len(payload) < 1 {
 		return nil, fmt.Errorf("sysex: sequencer engines payload empty")
 	}
 	n := int(payload[0])
-	if len(payload) < 1+n*11 {
+	if len(payload) < 1+n*18 {
 		return nil, fmt.Errorf("sysex: sequencer engines payload too short for %d engines", n)
 	}
 	engines := make([]model.SequencerEngine, n)
 	for i := 0; i < n; i++ {
-		off := 1 + i*11
-		engines[i].EngineNum = int(payload[off])
-		engines[i].Len = int(payload[off+1])
-		for j := 0; j < 9; j++ {
+		off := 1 + i*18
+		engines[i].EngineNum = i
+		engines[i].Len = int(payload[off] & 0x0F)
+		for j := 0; j < 16; j++ {
 			engines[i].Arr[j] = int(payload[off+2+j])
 		}
 	}
 	return engines, nil
 }
 
-// EncodeSequencerEngines produces the sequencer-engine write payload
-// (04 06 upload). PENDING REMAP: shape unverified against the editor.
-// Pads to 64 bytes to match observed wire length.
+// EncodeSequencerEngines produces the WRITE payload for the 04 06
+// upload (sendControllerSequencerData at editor.js:15588-15601):
+// [count, then per engine len&0x0F, 0, arr[0..15]] — the same
+// 18-byte entry layout as the dump.
 func EncodeSequencerEngines(engines []model.SequencerEngine) []byte {
-	dataLen := 1 + len(engines)*11
-	padLen := 64
-	if dataLen > padLen {
-		padLen = dataLen
-	}
-	out := make([]byte, padLen)
+	out := make([]byte, 1+len(engines)*18)
 	out[0] = byte(len(engines))
 	for i, e := range engines {
-		off := 1 + i*11
-		out[off] = byte(e.EngineNum)
-		out[off+1] = byte(e.Len)
-		for j := 0; j < 9; j++ {
+		off := 1 + i*18
+		out[off] = byte(e.Len & 0x0F)
+		for j := 0; j < 16; j++ {
 			out[off+2+j] = byte(e.Arr[j])
 		}
 	}
 	return out
 }
 
-// DecodeOmniports decodes an omniport payload.
-// PENDING REMAP: keyed to 03 24 under the old wrong mapping; omniport
-// data actually arrives on 03 23. Not called by ingest until re-derived.
-// Layout: [0]=count, then count × 4-byte entries [portNum, type, val1, val2].
+// omniportEntryLen is the wire size of one omniport entry. Dump and
+// write directions share the same field order (the editor's
+// buildFromArray at editor.js:12861-12881 and toArray at
+// editor.js:12780-12782).
+const omniportEntryLen = 11
+
+// DecodeOmniports decodes the payload of a 03 23 frame (omniport /
+// expression inputs). Layout: [0]=count, then count × 11-byte entries
+// [portNum, type, fixedSwTip, td1, td2, fixedSwRing, rd1, rd2,
+// fixedSwTipRing, trd1, trd2].
 func DecodeOmniports(payload []byte) ([]model.OmniportInput, error) {
 	if len(payload) < 1 {
 		return nil, fmt.Errorf("sysex: omniports payload empty")
 	}
 	n := int(payload[0])
-	if len(payload) < 1+n*4 {
+	if len(payload) < 1+n*omniportEntryLen {
 		return nil, fmt.Errorf("sysex: omniports payload too short for %d ports", n)
 	}
 	ports := make([]model.OmniportInput, n)
 	for i := 0; i < n; i++ {
-		off := 1 + i*4
+		off := 1 + i*omniportEntryLen
 		ports[i] = model.OmniportInput{
-			PortNum: int(payload[off]),
-			Type:    int(payload[off+1]),
-			Val1:    int(payload[off+2]),
-			Val2:    int(payload[off+3]),
+			PortNum:        int(payload[off]),
+			Type:           int(payload[off+1]),
+			FixedSwTip:     int(payload[off+2]),
+			TipData1:       int(payload[off+3]),
+			TipData2:       int(payload[off+4]),
+			FixedSwRing:    int(payload[off+5]),
+			RingData1:      int(payload[off+6]),
+			RingData2:      int(payload[off+7]),
+			FixedSwTipRing: int(payload[off+8]),
+			TipRingData1:   int(payload[off+9]),
+			TipRingData2:   int(payload[off+10]),
 		}
 	}
 	return ports, nil
 }
 
-// EncodeOmniports produces the omniport write payload (04 08 upload).
-// PENDING REMAP: shape unverified against the editor.
+// EncodeOmniports produces the WRITE payload for the 04 08 upload
+// (sendControllerOmniPortData at editor.js:15673-15679, sending the
+// manager's toArray). Note the asymmetry with DecodeOmniports: the
+// dump has a leading count byte; the write is the bare concatenation
+// of 11-byte port entries in the same field order.
 func EncodeOmniports(ports []model.OmniportInput) []byte {
-	out := make([]byte, 1+len(ports)*4)
-	out[0] = byte(len(ports))
-	for i, p := range ports {
-		off := 1 + i*4
-		out[off] = byte(p.PortNum)
-		out[off+1] = byte(p.Type)
-		out[off+2] = byte(p.Val1)
-		out[off+3] = byte(p.Val2)
+	out := make([]byte, 0, len(ports)*omniportEntryLen)
+	for _, p := range ports {
+		out = append(out,
+			byte(p.PortNum), byte(p.Type),
+			byte(p.FixedSwTip), byte(p.TipData1), byte(p.TipData2),
+			byte(p.FixedSwRing), byte(p.RingData1), byte(p.RingData2),
+			byte(p.FixedSwTipRing), byte(p.TipRingData1), byte(p.TipRingData2))
 	}
 	return out
 }
 
-// DecodeMidiEvents decodes an event-processor payload.
-// PENDING REMAP: keyed to 03 22 under the old wrong mapping (03 22 is
-// bank arrangement); event-processor data actually arrives on 03 27.
-// Not called by ingest until re-derived.
-// Layout: 10-byte header + 128-byte remap table (byte[i] = output for input i).
-func DecodeMidiEvents(payload []byte) (model.MidiEventProcessor, error) {
-	if len(payload) < 138 {
-		return model.MidiEventProcessor{}, fmt.Errorf("sysex: midi events payload has %d bytes, want 138", len(payload))
+// midiEventSlots is the fixed number of event processor rules
+// (editor.js:12994 numEvents = 16).
+const midiEventSlots = 16
+
+// DecodeMidiEvents decodes the payload of a 03 27 frame (MIDI event
+// processor). Layout, from the editor's readFromArray
+// (editor.js:13028-13051): 16 rows of
+// [0x7F, slotIndex, rowLen, numberFrom, numberTo, channelFrom,
+// channelTo, typeFrom, typeTo, valueFrom, valueTo,
+// toSetOutgoingValue, toMapInputOutput, toMapValue].
+func DecodeMidiEvents(payload []byte) ([midiEventSlots]model.MidiEvent, error) {
+	var events [midiEventSlots]model.MidiEvent
+	for i := 0; i+14 <= len(payload); {
+		if payload[i] != 0x7F {
+			i++
+			continue
+		}
+		slot := int(payload[i+1])
+		if slot >= midiEventSlots {
+			return events, fmt.Errorf("sysex: midi event row has out-of-range slot %d", slot)
+		}
+		d := payload[i+3 : i+14]
+		events[slot] = model.MidiEvent{
+			NumberFrom:         int(d[0]),
+			NumberTo:           int(d[1]),
+			ChannelFrom:        int(d[2]),
+			ChannelTo:          int(d[3]),
+			TypeFrom:           int(d[4]),
+			TypeTo:             int(d[5]),
+			ValueFrom:          int(d[6]),
+			ValueTo:            int(d[7]),
+			ToSetOutgoingValue: d[8] != 0,
+			ToMapInputOutput:   int(d[9] & 0x03),
+			ToMapValue:         d[10] != 0,
+		}
+		i += 14
 	}
-	var ep model.MidiEventProcessor
-	copy(ep.Header[:], payload[:10])
-	copy(ep.RemapTable[:], payload[10:138])
-	return ep, nil
+	return events, nil
 }
 
-// EncodeMidiEvents produces the event-processor write payload
-// (04 0A upload). PENDING REMAP: shape unverified against the editor.
-func EncodeMidiEvents(ep model.MidiEventProcessor) []byte {
-	out := make([]byte, 138)
-	copy(out[:10], ep.Header[:])
-	copy(out[10:], ep.RemapTable[:])
+// EncodeMidiEvents produces the WRITE payload for the 04 0A upload
+// (getArray at editor.js:13052-13072) — the same 14-byte row layout
+// as the dump, always all 16 slots.
+func EncodeMidiEvents(events [midiEventSlots]model.MidiEvent) []byte {
+	boolByte := func(b bool) byte {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	out := make([]byte, 0, midiEventSlots*14)
+	for i, e := range events {
+		out = append(out, 0x7F, byte(i), 11,
+			byte(e.NumberFrom), byte(e.NumberTo),
+			byte(e.ChannelFrom), byte(e.ChannelTo),
+			byte(e.TypeFrom), byte(e.TypeTo),
+			byte(e.ValueFrom), byte(e.ValueTo),
+			boolByte(e.ToSetOutgoingValue),
+			byte(e.ToMapInputOutput&0x03),
+			boolByte(e.ToMapValue))
+	}
 	return out
 }
 

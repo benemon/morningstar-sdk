@@ -47,10 +47,11 @@ type (
 	WaveformEngine         = model.WaveformEngine
 	ResistorLadderSwitch   = model.ResistorLadderSwitch
 	MidiClockSlot          = model.MidiClockSlot
+	ScrollCounter          = model.ScrollCounter
 	BankArrangement        = model.BankArrangement
 	SequencerEngine        = model.SequencerEngine
 	OmniportInput          = model.OmniportInput
-	MidiEventProcessor     = model.MidiEventProcessor
+	MidiEvent              = model.MidiEvent
 	MidiChannel            = model.MidiChannel
 
 	// Frame is the parsed SysEx frame type, re-exported so Subscribe
