@@ -11,6 +11,22 @@ permissions:
   checks: write # dorny/test-reporter creates a check run
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.4
+
   test:
     strategy:
       fail-fast: false

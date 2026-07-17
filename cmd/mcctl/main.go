@@ -86,7 +86,7 @@ func cmdList() {
 
 func cmdPing(ctx context.Context) {
 	client := open(ctx)
-	defer client.Close()
+	defer closeClient(client)
 
 	active, err := client.Ping(ctx)
 	if err != nil {
@@ -105,7 +105,7 @@ func cmdShow(ctx context.Context, args []string) {
 	case "bank":
 		bank := parseBank(args[1])
 		client := open(ctx)
-		defer client.Close()
+		defer closeClient(client)
 		state := selectBank(ctx, client, bank)
 		printBank(state.Bank)
 	case "preset":
@@ -115,7 +115,7 @@ func cmdShow(ctx context.Context, args []string) {
 		bank := parseBank(args[1])
 		preset := parsePreset(args[2])
 		client := open(ctx)
-		defer client.Close()
+		defer closeClient(client)
 		state := selectBank(ctx, client, bank)
 		fmt.Printf("bank %d %q\n", state.Bank.BankNumber, state.Bank.BankName)
 		printPreset(state.Bank.PresetArray[preset], false)
@@ -147,7 +147,7 @@ func cmdSetCC(ctx context.Context, args []string) {
 	cc := fs.Int("cc", -1, "CC number 0-127")
 	value := fs.Int("value", -1, "CC value 0-127")
 	temporary := fs.Bool("temporary", false, "live override only; reverts on bank change")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: Parse exits on failure
 
 	bankNum := parseBankInt(*bank)
 	presetNum := parsePreset(*preset)
@@ -165,7 +165,7 @@ func cmdSetCC(ctx context.Context, args []string) {
 	}
 
 	client := open(ctx)
-	defer client.Close()
+	defer closeClient(client)
 	selectBank(ctx, client, bankNum)
 
 	// The message fires on Press in both toggle positions — the
@@ -191,7 +191,7 @@ func cmdSetName(ctx context.Context, args []string) {
 	bank := fs.Int("bank", -1, "bank index 0-127")
 	preset := fs.String("preset", "", "preset letter A-X or index 0-23")
 	temporary := fs.Bool("temporary", false, "live override only; reverts on bank change")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: Parse exits on failure
 	if fs.NArg() != 1 {
 		die("set name: exactly one name argument required")
 	}
@@ -201,7 +201,7 @@ func cmdSetName(ctx context.Context, args []string) {
 	presetNum := parsePreset(*preset)
 
 	client := open(ctx)
-	defer client.Close()
+	defer closeClient(client)
 	selectBank(ctx, client, bankNum)
 
 	if err := client.SetPresetShortName(ctx, presetNum, name, !*temporary); err != nil {
@@ -214,7 +214,7 @@ func cmdSetName(ctx context.Context, args []string) {
 
 func cmdWatch(ctx context.Context) {
 	client := open(ctx)
-	defer client.Close()
+	defer closeClient(client)
 
 	ch, cancel := client.Subscribe(nil)
 	defer cancel()
@@ -242,6 +242,16 @@ func open(ctx context.Context) *mc8pro.Client {
 		die("open: %v", err)
 	}
 	return client
+}
+
+// closeClient warns rather than dying on a failed close: the
+// command's work is already done, but a failed session close can
+// leave the device stuck in edit mode, which the user should know.
+func closeClient(client *mc8pro.Client) {
+	if err := client.Close(); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: session close failed: %v (device may be stuck in edit mode)\n", err)
+	}
 }
 
 // selectBank navigates the client to a bank (which also reads the
