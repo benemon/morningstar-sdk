@@ -1,0 +1,79 @@
+name: Release
+
+# Releases are tag-driven:
+#
+#   v1.2.3        full release  — the tagged commit MUST be on main
+#   v1.2.3-rc.1   release candidate — may be tagged on any branch
+#
+# The `release` job runs in the `release` GitHub environment. Configure
+# that environment in repo Settings → Environments with a required
+# reviewer to make publication a manual approval step.
+#
+# NOTE: for a Go module, pushing the tag is what makes the version
+# fetchable via `go get` — the Go module proxy reads git tags directly
+# and does not care about GitHub Releases. The gate below controls the
+# GitHub Release object (visibility, release notes, prerelease flag)
+# and enforces the branch policy; it cannot un-publish a pushed tag.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce branch policy
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          case "$TAG" in
+            *-*)
+              echo "Pre-release tag $TAG: any branch allowed."
+              ;;
+            *)
+              git fetch origin main
+              if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                echo "Full release tag $TAG points at a commit on main."
+              else
+                echo "::error::Full release tag $TAG must point at a commit on main. Tag a release candidate (e.g. ${TAG}-rc.1) to release from a feature branch."
+                exit 1
+              fi
+              ;;
+          esac
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      - run: go test -race ./...
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARGS=(--generate-notes --verify-tag)
+          case "$GITHUB_REF_NAME" in
+            *-*) ARGS+=(--prerelease) ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "${ARGS[@]}"

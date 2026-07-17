@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read
+  checks: write # dorny/test-reporter creates a check run
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # rtmidi is a cgo package; on Linux it needs the ALSA headers.
+      - name: Install ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "gofmt needed on:" && echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      # Hardware-dependent tests are behind the `integration` build tag
+      # and are excluded here automatically; this runs unit tests only.
+      # JSON output feeds the test-reporter step below.
+      - name: go test
+        run: >
+          go test -race -covermode=atomic
+          -coverpkg=./pkg/... -coverprofile=coverage.out
+          -json ./... > test-results.json
+
+      - name: Test report
+        uses: dorny/test-reporter@v3
+        if: success() || failure() # report on test failure too
+        with:
+          name: Go tests (${{ matrix.os }})
+          path: test-results.json
+          reporter: golang-json
+
+      - name: Coverage summary
+        if: success() || failure()
+        run: |
+          echo '### Unit test coverage (`pkg/`)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
