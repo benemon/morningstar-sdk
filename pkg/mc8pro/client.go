@@ -26,6 +26,12 @@ const (
 	defaultFrameTimeout    = 2 * time.Second
 	defaultDumpQuietPeriod = 400 * time.Millisecond
 	defaultDumpMaxDuration = 3 * time.Second
+
+	// backupHardDeadline caps a full ReadBank backup dump. A healthy
+	// dump is ~1.5s with ACKs; without ACKs the device retries with
+	// ~8s gaps, so this must be generous enough to surface that
+	// failure mode rather than mask it.
+	backupHardDeadline = 30 * time.Second
 )
 
 // OpenOptions configures a [Client] before it's opened. The zero
@@ -769,7 +775,7 @@ func (c *Client) ReadBank(ctx context.Context) error {
 	newState := c.state.Clone()
 	c.stateMu.RUnlock()
 
-	hardDeadline := time.NewTimer(30 * time.Second)
+	hardDeadline := time.NewTimer(backupHardDeadline)
 	defer hardDeadline.Stop()
 
 	frameCount := 0
@@ -810,7 +816,7 @@ func (c *Client) ReadBank(ctx context.Context) error {
 			ingestFrame(&newState, frame, c.log)
 
 		case <-hardDeadline.C:
-			return fmt.Errorf("mc8pro: bank backup timed out after 10s (%d frames received)", frameCount)
+			return fmt.Errorf("mc8pro: bank backup timed out after %s (%d frames received)", backupHardDeadline, frameCount)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
